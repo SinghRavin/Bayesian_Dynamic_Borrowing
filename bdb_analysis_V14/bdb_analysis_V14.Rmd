@@ -1,0 +1,64 @@
+---
+title: "bdb_analysis_V14"
+date: "2024-08-09"
+author: "Ravinder Singh"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+```
+
+# The aim of this analysis is to justify the use of n=25 as sufficient number of replication.
+
+```{r}
+results_full <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V13/results_full_1-25.csv")
+results_full$X <- NULL
+```
+
+```{r}
+total_reps <- 25
+```
+
+```{r}
+df <- results_full |>
+  filter(Sample_Size==100 &
+           Heterogeneity_Level==2 &
+           Variable_Name=="Age" &
+           Prior_Setting=="Non-Informative")
+```
+
+```{r}
+df <- df |>
+  mutate(cum_looic = cummean(looic),
+         cum_TESS = cummean(TESS),
+         cum_log.MSE = cummean(log.MSE),
+         cum_per.bias = cummean(per.bias),
+         cum_width_hpd_95 = cummean(width_hpd_95),
+         cum_coverage_95 = cummean(coverage_95))
+```
+
+```{r}
+df <- df |>
+  mutate(index = 1:total_reps)
+```
+
+```{r}
+ggplot(df, aes(x = index, y = cum_TESS)) +
+  geom_line(color = "blue") +           # Line plot
+  geom_point(color = "red", size = 3) + # Points on the line
+  labs(x = "Index", y = "Values", title = "Plot of Values Against Index") +
+  theme_minimal()
+```
+
+```{r}
+
+```
+

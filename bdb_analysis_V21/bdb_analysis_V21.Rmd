@@ -1,0 +1,151 @@
+---
+title: "bdb_analysis_V21"
+date: "2024-08-11"
+author: "Ravinder Singh"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(egg)
+```
+
+# The aim of this analysis is to justify the use of n=35 as sufficient number of replication.
+
+```{r}
+results_full <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V20/results_full.csv")
+results_full$X <- NULL
+```
+
+```{r}
+total_reps <- 35
+```
+
+```{r}
+df <- results_full |>
+  filter(Sample_Size==100 &
+           Heterogeneity_Level==5 &
+           Variable_Name=="Female" &
+           Prior_Setting=="Non-Informative")
+```
+
+```{r}
+df <- df |>
+  mutate(cum_looic = cummean(looic),
+         cum_TESS = cummean(TESS),
+         cum_log.MSE = cummean(log.MSE),
+         cum_per.bias = cummean(per.bias),
+         cum_width_hpd_95 = cummean(width_hpd_95),
+         cum_coverage_95 = cummean(coverage_95))
+```
+
+```{r}
+df <- df |>
+  mutate(index = 1:total_reps)
+```
+
+```{r}
+tess <- ggplot(df, aes(x = index, y = cum_TESS)) +
+  geom_line(color = "blue") +           # Line plot
+  geom_point(color = "red", size = 3) + # Points on the line
+  labs(x = "Replication Index", y = "Average TESS", title = "") +
+  theme_minimal(base_size = 18) +                   # Increase the base size for all text elements
+  theme(
+    axis.title.x = element_text(size = 15),         # Increase x-axis title size
+    axis.title.y = element_text(size = 15),         # Increase y-axis title size
+    axis.text.x = element_text(size = 16),          # Increase x-axis text size
+    axis.text.y = element_text(size = 16),          # Increase y-axis text size
+    plot.title = element_text(size = 22)            # Increase title size
+  )
+```
+
+```{r}
+looic <- ggplot(df, aes(x = index, y = cum_looic)) +
+  geom_line(color = "blue") +           # Line plot
+  geom_point(color = "red", size = 3) + # Points on the line
+  labs(x = "Replication Index", y = "Average LOOIC", title = "") +
+  theme_minimal(base_size = 18) +                   # Increase the base size for all text elements
+  theme(
+    axis.title.x = element_text(size = 15),         # Increase x-axis title size
+    axis.title.y = element_text(size = 15),         # Increase y-axis title size
+    axis.text.x = element_text(size = 16),          # Increase x-axis text size
+    axis.text.y = element_text(size = 16),          # Increase y-axis text size
+    plot.title = element_text(size = 22)            # Increase title size
+  )
+```
+
+```{r}
+log.MSE <- ggplot(df, aes(x = index, y = cum_log.MSE)) +
+  geom_line(color = "blue") +           # Line plot
+  geom_point(color = "red", size = 3) + # Points on the line
+  labs(x = "Replication Index", y = "Average log(MSE)", title = "") +
+  theme_minimal(base_size = 18) +                   # Increase the base size for all text elements
+  theme(
+    axis.title.x = element_text(size = 15),         # Increase x-axis title size
+    axis.title.y = element_text(size = 15),         # Increase y-axis title size
+    axis.text.x = element_text(size = 16),          # Increase x-axis text size
+    axis.text.y = element_text(size = 16),          # Increase y-axis text size
+    plot.title = element_text(size = 22)            # Increase title size
+  )
+```
+
+```{r}
+per.bias <- ggplot(df, aes(x = index, y = cum_per.bias)) +
+  geom_line(color = "blue") +           # Line plot
+  geom_point(color = "red", size = 3) + # Points on the line
+  labs(x = "Replication Index", y = "Average Percentage Bias", title = "") +
+  theme_minimal(base_size = 18) +                   # Increase the base size for all text elements
+  theme(
+    axis.title.x = element_text(size = 15),         # Increase x-axis title size
+    axis.title.y = element_text(size = 15),         # Increase y-axis title size
+    axis.text.x = element_text(size = 16),          # Increase x-axis text size
+    axis.text.y = element_text(size = 16),          # Increase y-axis text size
+    plot.title = element_text(size = 22)            # Increase title size
+  )
+```
+
+```{r}
+width_hpd_95 <- ggplot(df, aes(x = index, y = cum_width_hpd_95)) +
+  geom_line(color = "blue") +           # Line plot
+  geom_point(color = "red", size = 3) + # Points on the line
+  labs(x = "Replication Index", y = "Average Width of 95% HPD CI", title = "") +
+  theme_minimal(base_size = 18) +                   # Increase the base size for all text elements
+  theme(
+    axis.title.x = element_text(size = 15),         # Increase x-axis title size
+    axis.title.y = element_text(size = 15),         # Increase y-axis title size
+    axis.text.x = element_text(size = 16),          # Increase x-axis text size
+    axis.text.y = element_text(size = 16),          # Increase y-axis text size
+    plot.title = element_text(size = 22)            # Increase title size
+  )
+```
+
+```{r}
+coverage_95 <- ggplot(df, aes(x = index, y = cum_coverage_95)) +
+  geom_line(color = "blue") +           # Line plot
+  geom_point(color = "red", size = 3) + # Points on the line
+  labs(x = "Replication Index", y = "Average Coverage of 95% HPD CI", title = "") +
+  theme_minimal(base_size = 18) +                   # Increase the base size for all text elements
+  theme(
+    axis.title.x = element_text(size = 15),         # Increase x-axis title size
+    axis.title.y = element_text(size = 15),         # Increase y-axis title size
+    axis.text.x = element_text(size = 16),          # Increase x-axis text size
+    axis.text.y = element_text(size = 16),          # Increase y-axis text size
+    plot.title = element_text(size = 22)            # Increase title size
+  )
+```
+
+```{r}
+ggarrange(tess, looic, log.MSE, per.bias, width_hpd_95, coverage_95, nrow = 2, ncol = 3)
+```
+
+```{r}
+
+```
+

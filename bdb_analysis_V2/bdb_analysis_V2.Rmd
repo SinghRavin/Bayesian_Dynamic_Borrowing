@@ -1,0 +1,790 @@
+---
+title: "bdb_analysis_V2"
+author: "Ravinder Singh"
+date: "2024-06-27"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+source("H:/ravi_dsi_summer_project/libraries_and_functions.R")
+```
+
+# The aim of this analysis is to prepare the data sets (with follow up time calculated) for the DG-01 and DG-02 studies.
+
+# For DG-01, We will use DCO as "2020-06-03".
+# For DG-02, We will use the primary data set with DCO as "2021-04-09".
+
+# The baseline covariates that we will use in both DG-01 and DG-02 are the following,
+
+1. Age
+2. Sex
+3. BMI
+4. Liver metastasis at baseline
+5. Hepatic impairment at baseline
+6. Number of metastatic sites 
+
+# The outcomes we will consider are:
+
+1. Composite of 'event' and 'death'.
+2. 'event'.
+3. 'death'.
+
+Where, event is 'NST' aka next systemic treatment.
+
+```{r}
+# DG-01 full data.
+dg1 <- read.sas7bdat("S:/DS8201-A-J202/Production/restricted/restricted_eg/restricted_DCO_20200603_eg/rd_copy/adam/adsl.sas7bdat")
+
+# DG-01 adtte data.
+dg1_adtte <- read.sas7bdat("S:/DS8201-A-J202/Production/restricted/restricted_eg/restricted_DCO_20200603_eg/rd_copy/adam/adtte.sas7bdat")
+
+# # DG-01 adae data.
+# dg1_adae <- read.sas7bdat("S:/DS8201-A-J202/Production/restricted/restricted_eg/restricted_DCO_20200603_eg/rd_copy/adam/adae.sas7bdat")
+
+# DG-02 primary data.
+dg2_primary <- read_sas("S:/DS8201-A-U205/restricted/rstrct_eg/rstrct_DCO20210409/rstrct_rd_copy/rstrct_adam/adsl.sas7bdat")
+
+# # DG-02 follow-up data.
+# dg2_follow_up <- read_sas("S:/DS8201-A-U205/restricted/rstrct_eg/rstrct_fu_DCO20211108/rstrct_rd_copy/rstrct_adam/adsl.sas7bdat")
+```
+
+```{r}
+# Let's subset only what we want.
+
+dg1 <- dg1 |> 
+  dplyr::filter(FASFL=="Y" & ACTARM=="DS-8201a 6.4mg/kg Q3S Primary Cohort")
+
+dg2_primary <- dg2_primary |> 
+  dplyr::filter(FASFL=="Y" & ACTARM=="Trastuzumab deruxtecan")
+
+# dg2_follow_up <- dg2_follow_up |> 
+#   dplyr::filter(FASFL=="Y" & ACTARM=="Trastuzumab deruxtecan")
+```
+
+```{r}
+# Grabbing a variable from dg1_adtte for our need.
+dg1_adtte <- dg1_adtte |>
+  dplyr::select(SUBJID, LSTALVDT) |>
+  group_by(SUBJID) |>
+  slice(1)
+
+dg1 <- merge(dg1, dg1_adtte, by="SUBJID", all.x=T)
+```
+
+```{r}
+# Let's keep only those variables what we need. 
+
+dg1 <- dg1 |>
+  dplyr::select(SUBJID, 
+                TRTSDTC, 
+                NWTRSDT, DTHDTC, DISCDT, LSTALVDT,
+                AGE, SEX, BMIBL, LIVMETFL, HEPATIMP, NMETASIT)
+
+dg2_primary <- dg2_primary |>
+  dplyr::select(SUBJID, 
+                TRTSDTC,
+                NWTRSDT, DTHDTC, DISCDT, LSTALVDT,
+                AGE, SEX, BMIBL, LIVMYN, HEPAIP, NUMMETS)
+```
+
+```{r}
+# Let's convert the SAS date variables to character dates.
+
+dg1 <- dg1 |>
+  mutate(NWTRSDT = as.Date(NWTRSDT, '1960-01-01'),
+         DISCDT = as.Date(DISCDT, '1960-01-01'),
+         LSTALVDT = as.Date(LSTALVDT, '1960-01-01'))
+
+# Let's code "" as NA in DTHDTC variable.
+
+dg1 <- dg1 |>
+  mutate(DTHDTC = ifelse(DTHDTC=="", NA, DTHDTC))
+
+dg2_primary <- dg2_primary |>
+  mutate(DTHDTC = ifelse(DTHDTC=="", NA, DTHDTC))
+
+# Let's add the DCO.
+
+dg1 <- dg1 |>
+  mutate(DCO = "2020-06-03")
+
+dg2_primary <- dg2_primary |>
+  mutate(DCO = "2021-04-09")
+
+# Convert TRTSDTC to just date.
+
+dg1 <- dg1 |>
+  mutate(TRTSDTC = as.Date(TRTSDTC))
+
+dg2_primary <- dg2_primary |>
+  mutate(TRTSDTC = as.Date(TRTSDTC))
+```
+
+```{r eval=FALSE, include=FALSE}
+# More fixing.
+
+dg1 <- dg1 |>
+  mutate(TRTSDTC = ifelse(TRTSDTC=="NaN", NA, TRTSDTC),
+         NWTRSDT = ifelse(NWTRSDT=="NaN", NA, NWTRSDT),
+         DTHDTC = ifelse(DTHDTC=="NaN", NA, DTHDTC),
+         DISCDT = ifelse(DISCDT=="NaN", NA, DISCDT),
+         LSTALVDT = ifelse(LSTALVDT=="NaN", NA, LSTALVDT))
+
+dg2_primary <- dg2_primary |>
+  mutate(TRTSDTC = ifelse(TRTSDTC=="NaN", NA, TRTSDTC),
+         NWTRSDT = ifelse(NWTRSDT=="NaN", NA, NWTRSDT),
+         DTHDTC = ifelse(DTHDTC=="NaN", NA, DTHDTC),
+         DISCDT = ifelse(DISCDT=="NaN", NA, DISCDT),
+         LSTALVDT = ifelse(LSTALVDT=="NaN", NA, LSTALVDT))
+```
+
+
+```{r}
+# Let's force the date class on all date variables.
+
+dg1 <- dg1 |>
+  mutate(TRTSDTC = as.Date(TRTSDTC),
+         NWTRSDT = as.Date(NWTRSDT),
+         DTHDTC = as.Date(DTHDTC),
+         DISCDT = as.Date(DISCDT),
+         LSTALVDT = as.Date(LSTALVDT))
+
+dg2_primary <- dg2_primary |>
+  mutate(TRTSDTC = as.Date(TRTSDTC),
+         NWTRSDT = as.Date(NWTRSDT),
+         DTHDTC = as.Date(DTHDTC),
+         DISCDT = as.Date(DISCDT),
+         LSTALVDT = as.Date(LSTALVDT))
+```
+
+
+```{r}
+# Let's rename all the variables.
+
+names(dg1) <- c("ID", 
+                "d_index", 
+                "d_event", 
+                "d_death",
+                "d_discontinuation", "d_LKA",
+                "Age", "Sex", "BMI", "Liver_Mets", "Hepatic_Imp", 
+                "Num_Mets", 
+                "d_end")
+
+names(dg2_primary) <- c("ID", 
+                        "d_index", 
+                        "d_event", 
+                        "d_death",
+                        "d_discontinuation", "d_LKA",
+                        "Age", "Sex", "BMI", "Liver_Mets", "Hepatic_Imp", 
+                        "Num_Mets",
+                        "d_end")
+```
+
+```{r}
+# Let's tweak some of the variables
+
+dg1 <- dg1 |>
+  mutate(Female = ifelse(Sex=="F", 1, 0),
+         Liver_Mets = ifelse(Liver_Mets=="Y", 1, 0),
+         Hepatic_Imp = case_when(Hepatic_Imp=="NORMAL"~0,
+                                 Hepatic_Imp %in% c("MILD", "MODERATE")~1,
+                                 Hepatic_Imp==""~NA),
+         Num_Mets_MoreThan2 = ifelse(Num_Mets==">= 2", 1, 0))
+
+dg2_primary <- dg2_primary |>
+  mutate(Female = ifelse(Sex=="F", 1, 0),
+         Liver_Mets = ifelse(Liver_Mets=="Y", 1, 0),
+         Hepatic_Imp = case_when(Hepatic_Imp=="Normal"~0,
+                                 Hepatic_Imp %in% c("Mild", "Moderate")~1,
+                                 Hepatic_Imp==""~NA),
+         Num_Mets_MoreThan2 = ifelse(Num_Mets==">=2", 1, 0))
+```
+
+```{r}
+# Let's remove the unnecessary variables.
+# And, also arrange them.
+
+dg1 <- dg1 |>
+  dplyr::select(-c(Sex, Num_Mets))
+
+dg1 <- dg1 |>
+  dplyr::select(ID,
+                d_index, 
+                d_event, 
+                d_death, 
+                d_discontinuation, d_LKA, d_end,
+                Age, Female, BMI, Liver_Mets, Hepatic_Imp, Num_Mets_MoreThan2)
+
+dg2_primary <- dg2_primary |>
+  dplyr::select(-c(Sex, Num_Mets))
+
+dg2_primary <- dg2_primary |>
+  dplyr::select(ID,
+                d_index, 
+                d_event, 
+                d_death, 
+                d_discontinuation, d_LKA, d_end,
+                Age, Female, BMI, Liver_Mets, Hepatic_Imp, Num_Mets_MoreThan2)
+```
+
+# Now, let's take care of the imputation on missing values in covariates.
+# We will just impute them with mean/median/mode value, because of very few missing value. 
+
+```{r}
+dg1 |> 
+  dplyr::select(Age, Female, BMI, Liver_Mets, Hepatic_Imp, Num_Mets_MoreThan2) |> 
+  is.na() |> 
+  colSums()
+```
+
+We see DG-01 has no missingness in 6 covariates.
+
+```{r}
+dg2_primary |> 
+  dplyr::select(Age, Female, BMI, Liver_Mets, Hepatic_Imp, Num_Mets_MoreThan2) |> 
+  is.na() |> 
+  colSums()
+```
+
+
+```{r}
+hist(dg2_primary$BMI)
+```
+
+The histogram of BMI didn't look skewed, hence we use just the mean value for imputation at 1 missing value.  
+
+```{r}
+mean_bmi <- mean(dg2_primary$BMI, na.rm=T)
+dg2_primary <- dg2_primary |>
+  mutate(BMI = ifelse(is.na(BMI), mean_bmi, BMI))
+```
+
+```{r}
+dg2_primary$Hepatic_Imp |> table(useNA="ifany")
+```
+
+We will just replace the 1 missing value for hepatic impairment with 0 (which is a mode value).
+
+```{r}
+dg2_primary <- dg2_primary |>
+  mutate(Hepatic_Imp = ifelse(is.na(Hepatic_Imp), 0, Hepatic_Imp))
+```
+
+# Preparation for defining the follow up time.
+
+```{r}
+# Let's create an event and death status.
+
+dg1 <- dg1 |>
+  mutate(event = ifelse(is.na(d_event), 0, 1),
+         death = ifelse(is.na(d_death), 0, 1))
+
+dg1 <- dg1 |>
+  dplyr::select(ID,
+                d_index, 
+                event,
+                d_event, 
+                death,
+                d_death, 
+                d_discontinuation, d_LKA, d_end,
+                Age, Female, BMI, Liver_Mets, Hepatic_Imp, Num_Mets_MoreThan2)
+
+dg2_primary <- dg2_primary |>
+  mutate(event = ifelse(is.na(d_event), 0, 1),
+         death = ifelse(is.na(d_death), 0, 1))
+
+dg2_primary <- dg2_primary |>
+  dplyr::select(ID,
+                d_index,
+                event,
+                d_event, 
+                death,
+                d_death, 
+                d_discontinuation, d_LKA, d_end,
+                Age, Female, BMI, Liver_Mets, Hepatic_Imp, Num_Mets_MoreThan2)
+```
+
+# Let's define a composite outcome of event and death. I will call it 'composite'.
+
+```{r}
+dg1 <- dg1 |>
+  mutate(composite = pmax(event, death),
+         d_composite = pmin(d_event, d_death, na.rm = T))
+
+dg1 <- dg1 |>
+  dplyr::select(ID,
+                d_index, 
+                event,
+                d_event, 
+                death,
+                d_death, 
+                composite,
+                d_composite,
+                d_discontinuation, d_LKA, d_end,
+                Age, Female, BMI, Liver_Mets, Hepatic_Imp, Num_Mets_MoreThan2)
+
+dg2_primary <- dg2_primary |>
+  mutate(composite = pmax(event, death),
+         d_composite = pmin(d_event, d_death, na.rm = T))
+
+dg2_primary <- dg2_primary |>
+  dplyr::select(ID,
+                d_index, 
+                event,
+                d_event, 
+                death,
+                d_death,  
+                composite,
+                d_composite,
+                d_discontinuation, d_LKA, d_end,
+                Age, Female, BMI, Liver_Mets, Hepatic_Imp, Num_Mets_MoreThan2)
+```
+
+```{r}
+# Resolving the dilemma between d_discontinuation and d_LKA.
+
+sum(dg1$d_discontinuation > dg1$d_LKA, na.rm=T)
+sum(dg2_primary$d_discontinuation > dg2_primary$d_LKA, na.rm=T)
+```
+
+```{r}
+table(is.na(dg1$d_discontinuation), is.na(dg1$d_LKA))
+table(is.na(dg2_primary$d_discontinuation), is.na(dg2_primary$d_LKA))
+```
+
+We notice that the date of LKA is always later or equal to date of discontinuation, which logically makes sense.
+So, we will create a new variable called d_LFU which will be equal to LKA (whenever LKA is available), and it will be date of discontinuation (whenever LKA isn't available).
+
+We also notice that there are no instances where both are unavailable. Hence, it works out.
+
+```{r}
+dg1 <- dg1 |>
+  mutate(d_LFU = case_when(!is.na(d_LKA)~d_LKA,
+                           is.na(d_LKA)~d_discontinuation))
+
+dg1 <- dg1 |>
+  dplyr::select(ID,
+                d_index, 
+                event,
+                d_event, 
+                death,
+                d_death,  
+                composite,
+                d_composite,
+                d_discontinuation, d_LKA, d_LFU, d_end,
+                Age, Female, BMI, Liver_Mets, Hepatic_Imp, Num_Mets_MoreThan2)
+
+dg2_primary <- dg2_primary |>
+  mutate(d_LFU = case_when(!is.na(d_LKA)~d_LKA,
+                           is.na(d_LKA)~d_discontinuation))
+
+dg2_primary <- dg2_primary |>
+  dplyr::select(ID,
+                d_index, 
+                event,
+                d_event, 
+                death,
+                d_death,  
+                composite,
+                d_composite,
+                d_discontinuation, d_LKA, d_LFU, d_end,
+                Age, Female, BMI, Liver_Mets, Hepatic_Imp, Num_Mets_MoreThan2)
+```
+
+```{r}
+# Converting d_end into a as.Date
+
+dg1 <- dg1 |>
+  mutate(d_end = as.Date(d_end))
+
+dg2_primary <- dg2_primary |>
+  mutate(d_end = as.Date(d_end))
+```
+
+# Now, we need to define the follow up times for our outcomes i.e., 'composite' and 'death'.
+
+```{r}
+dg1 <- dg1 |> 
+  mutate(death_before_end = 
+           ifelse(is.na(d_death), "NA", ifelse(d_death < d_end, "1", "0")),
+         
+         composite_before_end = 
+           ifelse(is.na(d_composite), "NA", ifelse(d_composite < d_end, "1", "0")),
+         
+         event_before_end = 
+           ifelse(is.na(d_event), "NA", ifelse(d_event < d_end, "1", "0")),
+         
+         LFU_before_end = 
+           ifelse(is.na(d_LFU), "NA", ifelse(d_LFU < d_end, "1", "0")),
+         
+         death_before_composite = 
+           ifelse((is.na(d_death) | is.na(d_composite)), "NA", ifelse(d_death < d_composite,"1", "0")),
+         
+         death_before_event = 
+           ifelse((is.na(d_death) | is.na(d_event)), "NA", ifelse(d_death < d_event,"1", "0")),
+         
+         death_before_LFU = 
+           ifelse((is.na(d_death) | is.na(d_LFU)), "NA", ifelse(d_death < d_LFU,"1", "0")),
+         
+         LFU_before_composite = 
+           ifelse((is.na(d_LFU) | is.na(d_composite)), "NA", ifelse(d_LFU < d_composite,"1", "0")),
+         
+         LFU_before_event = 
+           ifelse((is.na(d_LFU) | is.na(d_event)), "NA", ifelse(d_LFU < d_event,"1", "0")))
+
+dg2_primary <- dg2_primary |> 
+  mutate(death_before_end = 
+           ifelse(is.na(d_death), "NA", ifelse(d_death < d_end, "1", "0")),
+         
+         composite_before_end = 
+           ifelse(is.na(d_composite), "NA", ifelse(d_composite < d_end, "1", "0")),
+         
+         event_before_end = 
+           ifelse(is.na(d_event), "NA", ifelse(d_event < d_end, "1", "0")),
+         
+         LFU_before_end = 
+           ifelse(is.na(d_LFU), "NA", ifelse(d_LFU < d_end, "1", "0")),
+         
+         death_before_composite = 
+           ifelse((is.na(d_death) | is.na(d_composite)), "NA", ifelse(d_death < d_composite,"1", "0")),
+         
+         death_before_event = 
+           ifelse((is.na(d_death) | is.na(d_event)), "NA", ifelse(d_death < d_event,"1", "0")),
+         
+         death_before_LFU = 
+           ifelse((is.na(d_death) | is.na(d_LFU)), "NA", ifelse(d_death < d_LFU,"1", "0")),
+         
+         LFU_before_composite = 
+           ifelse((is.na(d_LFU) | is.na(d_composite)), "NA", ifelse(d_LFU < d_composite,"1", "0")),
+         
+         LFU_before_event = 
+           ifelse((is.na(d_LFU) | is.na(d_event)), "NA", ifelse(d_LFU < d_event,"1", "0")))
+```
+
+# For, outcome = 'composite'.
+
+```{r}
+dg1 <- dg1 |> 
+  mutate(composite_Date_for_LFUT=
+           case_when(
+             (is.na(d_death) & death_before_end=="NA" & is.na(d_composite) & composite_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="NA") ~ d_LFU,
+
+(!is.na(d_death) & death_before_end=="1" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="0" & death_before_LFU=="0" &
+                LFU_before_composite=="0") ~ d_composite,
+             
+(is.na(d_death) & death_before_end=="NA" & is.na(d_composite) & composite_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="NA") ~ d_end,
+
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="0") ~ d_composite,
+             
+(!is.na(d_death) & death_before_end=="1" & is.na(d_composite) & composite_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="NA" & death_before_LFU=="0" &
+                LFU_before_composite=="NA") ~ d_death,
+
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="0") ~ d_composite,
+
+(!is.na(d_death) & death_before_end=="0" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="0" & death_before_LFU=="0" &
+                LFU_before_composite=="0") ~ d_composite,
+             
+(!is.na(d_death) & death_before_end=="1" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="0" & death_before_LFU=="0" &
+                LFU_before_composite=="1") ~ d_composite,
+
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="1") ~ d_composite,
+
+(!is.na(d_death) & death_before_end=="0" & is.na(d_composite) & composite_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_composite=="NA" & death_before_LFU=="0" &
+                LFU_before_composite=="NA") ~ d_end,
+             
+(!is.na(d_death) & death_before_end=="1" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="1" & death_before_LFU=="0" &
+                LFU_before_composite=="1") ~ d_death,
+
+(!is.na(d_death) & death_before_end=="0" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_composite=="0" & death_before_LFU=="0" &
+                LFU_before_composite=="0") ~ d_composite,
+
+(!is.na(d_death) & death_before_end=="0" & is.na(d_composite) & composite_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="NA" & death_before_LFU=="0" &
+                LFU_before_composite=="NA") ~ d_end,
+             
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_composite) & composite_before_end=="0" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="0") ~ d_end,
+
+(is.na(d_death) & death_before_end=="NA" & is.na(d_composite) & composite_before_end=="NA" & is.na(d_LFU) & LFU_before_end=="NA" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="NA") ~ d_end,
+
+(!is.na(d_death) & death_before_end=="0" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="0" & death_before_LFU=="0" &
+                LFU_before_composite=="1") ~ d_composite
+             )
+         )
+
+dg2_primary <- dg2_primary |> 
+  mutate(composite_Date_for_LFUT=
+           case_when(
+             (is.na(d_death) & death_before_end=="NA" & is.na(d_composite) & composite_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="NA") ~ d_LFU,
+
+(!is.na(d_death) & death_before_end=="1" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="0" & death_before_LFU=="0" &
+                LFU_before_composite=="0") ~ d_composite,
+             
+(is.na(d_death) & death_before_end=="NA" & is.na(d_composite) & composite_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="NA") ~ d_end,
+
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="0") ~ d_composite,
+             
+(!is.na(d_death) & death_before_end=="1" & is.na(d_composite) & composite_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="NA" & death_before_LFU=="0" &
+                LFU_before_composite=="NA") ~ d_death,
+
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="0") ~ d_composite,
+
+(!is.na(d_death) & death_before_end=="0" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="0" & death_before_LFU=="0" &
+                LFU_before_composite=="0") ~ d_composite,
+             
+(!is.na(d_death) & death_before_end=="1" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="0" & death_before_LFU=="0" &
+                LFU_before_composite=="1") ~ d_composite,
+
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="1") ~ d_composite,
+
+(!is.na(d_death) & death_before_end=="0" & is.na(d_composite) & composite_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_composite=="NA" & death_before_LFU=="0" &
+                LFU_before_composite=="NA") ~ d_end,
+             
+(!is.na(d_death) & death_before_end=="1" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="1" & death_before_LFU=="0" &
+                LFU_before_composite=="1") ~ d_death,
+
+(!is.na(d_death) & death_before_end=="0" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_composite=="0" & death_before_LFU=="0" &
+                LFU_before_composite=="0") ~ d_composite,
+
+(!is.na(d_death) & death_before_end=="0" & is.na(d_composite) & composite_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="NA" & death_before_LFU=="0" &
+                LFU_before_composite=="NA") ~ d_end,
+             
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_composite) & composite_before_end=="0" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="0") ~ d_end,
+
+(is.na(d_death) & death_before_end=="NA" & is.na(d_composite) & composite_before_end=="NA" & is.na(d_LFU) & LFU_before_end=="NA" & death_before_composite=="NA" & death_before_LFU=="NA" &
+                LFU_before_composite=="NA") ~ d_end,
+
+(!is.na(d_death) & death_before_end=="0" & !is.na(d_composite) & composite_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_composite=="0" & death_before_LFU=="0" &
+                LFU_before_composite=="1") ~ d_composite
+             )
+         )
+```
+
+```{r}
+dg1 <- dg1 |>
+  mutate(follow_up_time_composite_in_years_RS = as.numeric((1/365.25)*(composite_Date_for_LFUT - d_index)),
+         follow_up_time_composite_in_days_RS = as.numeric((composite_Date_for_LFUT - d_index)))
+
+dg2_primary <- dg2_primary |>
+  mutate(follow_up_time_composite_in_years_RS = as.numeric((1/365.25)*(composite_Date_for_LFUT - d_index)),
+         follow_up_time_composite_in_days_RS = as.numeric((composite_Date_for_LFUT - d_index)))
+```
+
+# For, outcome = 'event'.
+
+```{r}
+dg1 <- dg1 |> 
+  mutate(event_Date_for_LFUT=
+           case_when(
+             (is.na(d_death) & death_before_end=="NA" & is.na(d_event) & event_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="NA") ~ d_LFU,
+
+(!is.na(d_death) & death_before_end=="1" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="0" & death_before_LFU=="0" &
+                LFU_before_event=="0") ~ d_event,
+             
+(is.na(d_death) & death_before_end=="NA" & is.na(d_event) & event_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="NA") ~ d_end,
+
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="0") ~ d_event,
+             
+(!is.na(d_death) & death_before_end=="1" & is.na(d_event) & event_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="NA" & death_before_LFU=="0" &
+                LFU_before_event=="NA") ~ d_death,
+
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="0") ~ d_event,
+
+(!is.na(d_death) & death_before_end=="0" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="0" & death_before_LFU=="0" &
+                LFU_before_event=="0") ~ d_event,
+             
+(!is.na(d_death) & death_before_end=="1" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="0" & death_before_LFU=="0" &
+                LFU_before_event=="1") ~ d_event,
+
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="1") ~ d_event,
+
+(!is.na(d_death) & death_before_end=="0" & is.na(d_event) & event_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_event=="NA" & death_before_LFU=="0" &
+                LFU_before_event=="NA") ~ d_end,
+             
+(!is.na(d_death) & death_before_end=="1" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="1" & death_before_LFU=="0" &
+                LFU_before_event=="1") ~ d_death,
+
+(!is.na(d_death) & death_before_end=="0" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_event=="0" & death_before_LFU=="0" &
+                LFU_before_event=="0") ~ d_event,
+
+(!is.na(d_death) & death_before_end=="0" & is.na(d_event) & event_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="NA" & death_before_LFU=="0" &
+                LFU_before_event=="NA") ~ d_end,
+             
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_event) & event_before_end=="0" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="0") ~ d_end,
+
+(is.na(d_death) & death_before_end=="NA" & is.na(d_event) & event_before_end=="NA" & is.na(d_LFU) & LFU_before_end=="NA" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="NA") ~ d_end,
+
+(!is.na(d_death) & death_before_end=="0" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="0" & death_before_LFU=="0" &
+                LFU_before_event=="1") ~ d_event
+             )
+         )
+
+dg2_primary <- dg2_primary |> 
+  mutate(event_Date_for_LFUT=
+           case_when(
+             (is.na(d_death) & death_before_end=="NA" & is.na(d_event) & event_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="NA") ~ d_LFU,
+
+(!is.na(d_death) & death_before_end=="1" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="0" & death_before_LFU=="0" &
+                LFU_before_event=="0") ~ d_event,
+             
+(is.na(d_death) & death_before_end=="NA" & is.na(d_event) & event_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="NA") ~ d_end,
+
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="0") ~ d_event,
+             
+(!is.na(d_death) & death_before_end=="1" & is.na(d_event) & event_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="NA" & death_before_LFU=="0" &
+                LFU_before_event=="NA") ~ d_death,
+
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="0") ~ d_event,
+
+(!is.na(d_death) & death_before_end=="0" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="0" & death_before_LFU=="0" &
+                LFU_before_event=="0") ~ d_event,
+             
+(!is.na(d_death) & death_before_end=="1" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="0" & death_before_LFU=="0" &
+                LFU_before_event=="1") ~ d_event,
+
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="1") ~ d_event,
+
+(!is.na(d_death) & death_before_end=="0" & is.na(d_event) & event_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_event=="NA" & death_before_LFU=="0" &
+                LFU_before_event=="NA") ~ d_end,
+             
+(!is.na(d_death) & death_before_end=="1" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="1" & death_before_LFU=="0" &
+                LFU_before_event=="1") ~ d_death,
+
+(!is.na(d_death) & death_before_end=="0" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_event=="0" & death_before_LFU=="0" &
+                LFU_before_event=="0") ~ d_event,
+
+(!is.na(d_death) & death_before_end=="0" & is.na(d_event) & event_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="NA" & death_before_LFU=="0" &
+                LFU_before_event=="NA") ~ d_end,
+             
+(is.na(d_death) & death_before_end=="NA" & !is.na(d_event) & event_before_end=="0" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="0") ~ d_end,
+
+(is.na(d_death) & death_before_end=="NA" & is.na(d_event) & event_before_end=="NA" & is.na(d_LFU) & LFU_before_end=="NA" & death_before_event=="NA" & death_before_LFU=="NA" &
+                LFU_before_event=="NA") ~ d_end,
+
+(!is.na(d_death) & death_before_end=="0" & !is.na(d_event) & event_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_event=="0" & death_before_LFU=="0" &
+                LFU_before_event=="1") ~ d_event
+             )
+         )
+```
+
+```{r}
+dg1 <- dg1 |>
+  mutate(follow_up_time_event_in_years_RS = as.numeric((1/365.25)*(event_Date_for_LFUT - d_index)),
+         follow_up_time_event_in_days_RS = as.numeric((event_Date_for_LFUT - d_index)))
+
+dg2_primary <- dg2_primary |>
+  mutate(follow_up_time_event_in_years_RS = as.numeric((1/365.25)*(event_Date_for_LFUT - d_index)),
+         follow_up_time_event_in_days_RS = as.numeric((event_Date_for_LFUT - d_index)))
+```
+
+For, outcome = 'death'.
+
+```{r}
+dg1 <- dg1 |> 
+  mutate(death_Date_for_LFUT=
+           case_when(
+             (is.na(d_death) & death_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_LFU=="NA") ~ 
+               as.Date(d_LFU),
+             
+             (is.na(d_death) & death_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_LFU=="NA") ~ 
+               d_end,
+             
+             (!is.na(d_death) & death_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_LFU=="0") ~ 
+               as.Date(d_death),
+             
+             (!is.na(d_death) & death_before_end=="0" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_LFU=="0") ~ 
+               d_end,
+             
+             (!is.na(d_death) & death_before_end=="0" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_LFU=="0") ~ 
+               d_end,
+             
+             (is.na(d_death) & death_before_end=="NA" & is.na(d_LFU) & LFU_before_end=="NA" & death_before_LFU=="NA") ~ 
+               d_end 
+             )
+         )
+
+dg2_primary <- dg2_primary |> 
+  mutate(death_Date_for_LFUT=
+           case_when(
+             (is.na(d_death) & death_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_LFU=="NA") ~ 
+               as.Date(d_LFU),
+             
+             (is.na(d_death) & death_before_end=="NA" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_LFU=="NA") ~ 
+               d_end,
+             
+             (!is.na(d_death) & death_before_end=="1" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_LFU=="0") ~ 
+               as.Date(d_death),
+             
+             (!is.na(d_death) & death_before_end=="0" & !is.na(d_LFU) & LFU_before_end=="1" & death_before_LFU=="0") ~ 
+               d_end,
+             
+             (!is.na(d_death) & death_before_end=="0" & !is.na(d_LFU) & LFU_before_end=="0" & death_before_LFU=="0") ~ 
+               d_end,
+             
+             (is.na(d_death) & death_before_end=="NA" & is.na(d_LFU) & LFU_before_end=="NA" & death_before_LFU=="NA") ~ 
+               d_end 
+             )
+         )
+```
+
+```{r}
+dg1 <- dg1 |>
+  mutate(follow_up_time_death_in_years_RS = as.numeric((1/365.25)*(death_Date_for_LFUT - d_index)),
+         follow_up_time_death_in_days_RS = as.numeric((death_Date_for_LFUT - d_index)))
+
+dg2_primary <- dg2_primary |>
+  mutate(follow_up_time_death_in_years_RS = as.numeric((1/365.25)*(death_Date_for_LFUT - d_index)),
+         follow_up_time_death_in_days_RS = as.numeric((death_Date_for_LFUT - d_index)))
+```
+
+# Finally, let's add the column for study.
+
+```{r}
+dg1 <- dg1 |>
+  mutate(Study = 1)
+
+dg2_primary <- dg2_primary |>
+  mutate(Study = 2)
+```
+
+```{r}
+# Let's save the data sets.
+
+write.csv(dg1, "H:/ravi_dsi_summer_project/bdb_analysis_V2/DG-01.csv")
+write.csv(dg2_primary, "H:/ravi_dsi_summer_project/bdb_analysis_V2/DG-02.csv")
+```
+
+```{r}
+
+```
+

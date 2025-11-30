@@ -1,0 +1,159 @@
+---
+title: "bdb_analysis_V13"
+date: "2024-08-09"
+author: "Ravinder Singh"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+```
+
+# This analysis is to work on two results data sets created in 'bdb_analysis_V11' and 'bdb_analysis_V12'.
+
+```{r}
+results_100 <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V11/results_df_100_1-25.csv")
+results_162 <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V12/results_df_162_1-25.csv")
+```
+
+```{r}
+results_100$X <- NULL
+results_162$X <- NULL
+```
+
+```{r}
+results_full <- rbind(results_100, results_162)
+```
+
+```{r}
+write.csv(results_full, "H:/ravi_dsi_summer_project/bdb_analysis_V13/results_full_1-25.csv")
+```
+
+```{r}
+avg_results <- results_full |>
+  group_by(Heterogeneity_Level_Name, Prior_Setting) |>
+  summarise(TESS = mean(TESS),
+            looic = mean(looic),
+            log.MSE = mean(log.MSE),
+            per.bias = mean(per.bias),
+            width_hpd_95 = mean(width_hpd_95),
+            coverage_95 = mean(coverage_95))
+```
+
+```{r}
+avg_results <- avg_results |>
+  mutate(Heterogeneity_Level_Name = factor(Heterogeneity_Level_Name,
+                                           levels = c("50% less", "Same", "50% more", "Opposite"),
+                                           labels = c("50% less", "Same", "50% more", "Opposite")),
+         
+         Prior_Setting = factor(Prior_Setting,
+                                levels = c("Complete Pooling", "Non-Informative",
+                                           "PP(0)", "PP(0.5)", "PP(1)",
+                                           "BDB(0.1, 0.1)", "BDB(1, 1)", "BDB(1, 0.1)"),
+                                labels = c("Complete Pooling", "Non-Informative",
+                                           "PP(0)", "PP(0.5)", "PP(1)",
+                                           "BDB(0.1, 0.1)", "BDB(1, 1)", "BDB(1, 0.1)")))
+```
+
+```{r}
+avg_results <- avg_results |>
+  mutate(Prior_Setting_Class = case_when(Prior_Setting %in% c("Complete Pooling") ~ "Comp-Pool",
+                                         Prior_Setting %in% c("Non-Informative") ~ "Non-Inf",
+                                         Prior_Setting %in% c("PP(0)", "PP(0.5)", "PP(1)") ~ "PP",
+                                         Prior_Setting %in% c("BDB(0.1, 0.1)", "BDB(1, 1)", "BDB(1, 0.1)") ~ "BDB"))
+
+avg_results <- avg_results |>
+  mutate(Prior_Setting_Class = factor(Prior_Setting_Class,
+                                      levels = c("Comp-Pool", "Non-Inf", "PP", "BDB")))
+```
+
+For, looic
+
+```{r}
+ggplot(avg_results, aes(x = Heterogeneity_Level_Name, y = looic, group = Prior_Setting, color = Prior_Setting)) +
+  geom_line() +
+  facet_grid(.~Prior_Setting_Class) +
+  labs(title = "",
+       x = "Heterogeneity Level",
+       y = "Leave-One-Out Information Criterion",
+       linetype = "Group") +
+  theme_minimal()
+```
+
+For, TESS
+
+```{r}
+ggplot(avg_results, aes(x = Heterogeneity_Level_Name, y = TESS, group = Prior_Setting, color = Prior_Setting)) +
+  geom_line() +
+  facet_grid(.~Prior_Setting_Class) +
+  labs(title = "",
+       x = "Heterogeneity Level",
+       y = "Total Effective Sample Size",
+       linetype = "Group") +
+  theme_minimal()
+```
+
+For, log.MSE
+
+```{r}
+ggplot(avg_results, aes(x = Heterogeneity_Level_Name, y = log.MSE, group = Prior_Setting, color = Prior_Setting)) +
+  geom_line() +
+  facet_grid(.~Prior_Setting_Class) +
+  labs(title = "",
+       x = "Heterogeneity Level",
+       y = "Logarithm of Mean Squared Error",
+       linetype = "Group") +
+  theme_minimal()
+```
+
+For, per.bias
+
+```{r}
+ggplot(avg_results, aes(x = Heterogeneity_Level_Name, y = per.bias, group = Prior_Setting, color = Prior_Setting)) +
+  geom_line() +
+  facet_grid(.~Prior_Setting_Class) +
+  labs(title = "",
+       x = "Heterogeneity Level",
+       y = "Percentage Bias",
+       linetype = "Group") +
+  theme_minimal()
+```
+
+For, width_hpd_95
+
+```{r}
+ggplot(avg_results, aes(x = Heterogeneity_Level_Name, y = width_hpd_95, group = Prior_Setting, color = Prior_Setting)) +
+  geom_line() +
+  facet_grid(.~Prior_Setting_Class) +
+  labs(title = "",
+       x = "Heterogeneity Level",
+       y = "Width of 95% HPD Credible Interval",
+       linetype = "Group") +
+  theme_minimal()
+```
+
+For, coverage_95
+
+```{r}
+ggplot(avg_results, aes(x = Heterogeneity_Level_Name, y = coverage_95, group = Prior_Setting, color = Prior_Setting)) +
+  geom_line() +
+  facet_grid(.~Prior_Setting_Class) +
+  labs(title = "",
+       x = "Heterogeneity Level",
+       y = "Coverage of 95% HPD Credible Interval",
+       linetype = "Group") +
+  theme_minimal()
+```
+
+
+```{r}
+
+```
+

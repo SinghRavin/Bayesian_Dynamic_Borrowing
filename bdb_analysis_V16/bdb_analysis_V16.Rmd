@@ -1,0 +1,213 @@
+---
+title: "bdb_analysis_V16"
+date: "2024-08-09"
+author: "Ravinder Singh"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+```
+
+```{r}
+source("H:/ravi_dsi_summer_project/bdb_analysis_V9/libraries_and_functions_V9.R")
+```
+
+# The aim of this analysis is to run 26:35 replication for sample size 100.
+
+```{r}
+df_pros <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V1/data_all.csv")
+df_pros$X <- NULL
+```
+
+```{r}
+df <- df_pros |>
+  filter(Sample_Size %in% c(100) & 
+           Heterogeneity_Level %in% c(2, 5, 8, 10) &  
+           Iteration %in% c(26:35))
+```
+
+```{r}
+het_conds <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V1/het_conds.csv")
+het_conds$X <- NULL
+
+het_conds <- head(het_conds, -1) # Just removing the last row corresponding to U covariate.
+```
+
+```{r}
+dg1 <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V1/dg1.csv")
+dg2 <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V1/dg2.csv")
+dg1$X <- NULL
+dg2$X <- NULL
+```
+
+```{r}
+# Let's make a list of data sets that goes into Rstan machinery.
+
+# Unique combinations of sample, hetero, iter
+combinations <- unique(df[c("Sample_Size", "Heterogeneity_Level", "Iteration")])
+
+# Initialize the list to store combined datasets
+combined_list <- list()
+
+# Loop through each combination
+for (i in 1:nrow(combinations)) {
+  # Extract the combination
+  combination <- combinations[i,]
+  
+  # Subset the large data based on the current combination
+  subset_data <- subset(df, Sample_Size == combination$Sample_Size &
+                          Heterogeneity_Level == combination$Heterogeneity_Level &
+                          Iteration == combination$Iteration)
+  
+  # Select columns we want from the subset data
+  subset_data_abc <- subset_data[, c("Study", "ID", "Age", "Female", "BMI", "Liver_Mets",
+                                     "Hepatic_Imp", "Num_Mets_MoreThan2", "composite",
+                                     "follow_up_time_composite_in_days_RS")]
+  
+  # Create dg1 and dg2 with the combination values for sample, hetero, iter
+  dg1_with_comb <- cbind(Sample_Size = combination$Sample_Size,
+                         Heterogeneity_Level = combination$Heterogeneity_Level,
+                         Iteration = combination$Iteration,
+                         dg1)
+  dg2_with_comb <- cbind(Sample_Size = combination$Sample_Size,
+                         Heterogeneity_Level = combination$Heterogeneity_Level,
+                         Iteration = combination$Iteration,
+                         dg2)
+  
+  # Combine dg1, dg2, and the subset data using rbind
+  combined_data <- rbind(dg1_with_comb, dg2_with_comb, subset_data)
+  
+  # Add the combined data to the list
+  combined_list[[i]] <- combined_data
+}
+```
+
+```{r}
+simulation_func <- function(dt){
+  
+  if(dt$Heterogeneity_Level[1]==2){
+    cf = het_conds$cond2
+  } else if(dt$Heterogeneity_Level[1]==5){
+    cf = het_conds$cond5
+  } else if(dt$Heterogeneity_Level[1]==8){
+    cf = het_conds$cond8
+  } else if(dt$Heterogeneity_Level[1]==10){
+    cf = het_conds$cond10
+  }
+  
+  dt <- dt |> 
+    dplyr::select(-c(Sample_Size, Heterogeneity_Level, Iteration))
+  
+  total_obs <- nrow(dt)
+  
+  # complete pooling
+  pool <- pool(dt)
+  
+  # This will 'pool.var' be used to calculate the TESS for each of the prior setting.
+  est <- summary(pool)$summary
+  beta <- est[grep('^beta\\[', rownames(est)), ][1:7, ]
+  pool_var <- beta[,"sd"]^2 |> as.numeric()
+  
+  pool_est <- extract.stan(pool, coef = cf, pool.var = pool_var, total.obs = total_obs)
+  
+  # non-informative
+  non_inf <- non_inf(dt)
+  non_inf_est <- extract.stan(non_inf, coef = cf, pool.var = pool_var, total.obs = total_obs)
+  
+  # static power priors
+  pp.0 <- pp(dt, a = 0)
+  pp.50 <- pp(dt, a = 0.50)
+  pp.1 <- pp(dt, a = 1)
+  
+  pp.0_est <- extract.stan(pp.0, coef = cf, pool.var = pool_var, total.obs = total_obs)
+  pp.50_est <- extract.stan(pp.50, coef = cf, pool.var = pool_var, total.obs = total_obs)
+  pp.1_est <- extract.stan(pp.1, coef = cf, pool.var = pool_var, total.obs = total_obs)
+  
+  # Bayesian dynamic priors
+  bdb_.1 <- bdb(dt, nu1 = .1, nu2 = .1)
+  bdb_1_1 <- bdb(dt, nu1 = 1, nu2 = 1)
+  bdb_1_.1 <- bdb(dt, nu1 = 1, nu2 = .1)
+  
+  bdb_.1_est <- extract.stan(bdb_.1, coef = cf, pool.var = pool_var, total.obs = total_obs)
+  bdb_1_1_est <- extract.stan(bdb_1_1, coef = cf, pool.var = pool_var, total.obs = total_obs)
+  bdb_1_.1_est <- extract.stan(bdb_1_.1, coef = cf, pool.var = pool_var, total.obs = total_obs)
+  
+  return(list(pool_TESS = pool_est$TESS,
+              pool_looic = pool_est$looic,
+              pool_log.MSE = pool_est$log.MSE,
+              pool_per.bias = pool_est$per.bias,
+              pool_width_hpd_95 = pool_est$width_hpd_95,
+              pool_coverage_95 = pool_est$coverage_hpd_95,
+              
+              non_inf_TESS = non_inf_est$TESS,
+              non_inf_looic = non_inf_est$looic,
+              non_inf_log.MSE = non_inf_est$log.MSE,
+              non_inf_per.bias = non_inf_est$per.bias,
+              non_inf_width_hpd_95 = non_inf_est$width_hpd_95,
+              non_inf_coverage_95 = non_inf_est$coverage_hpd_95,
+              
+              pp.0_TESS = pp.0_est$TESS,
+              pp.0_looic = pp.0_est$looic,
+              pp.0_log.MSE = pp.0_est$log.MSE,
+              pp.0_per.bias = pp.0_est$per.bias,
+              pp.0_width_hpd_95 = pp.0_est$width_hpd_95,
+              pp.0_coverage_95 = pp.0_est$coverage_hpd_95,
+              
+              pp.50_TESS = pp.50_est$TESS,
+              pp.50_looic = pp.50_est$looic,
+              pp.50_log.MSE = pp.50_est$log.MSE,
+              pp.50_per.bias = pp.50_est$per.bias,
+              pp.50_width_hpd_95 = pp.50_est$width_hpd_95,
+              pp.50_coverage_95 = pp.50_est$coverage_hpd_95,
+              
+              pp.1_TESS = pp.1_est$TESS,
+              pp.1_looic = pp.1_est$looic,
+              pp.1_log.MSE = pp.1_est$log.MSE,
+              pp.1_per.bias = pp.1_est$per.bias,
+              pp.1_width_hpd_95 = pp.1_est$width_hpd_95,
+              pp.1_coverage_95 = pp.1_est$coverage_hpd_95,
+              
+              bdb_.1_TESS = bdb_.1_est$TESS,
+              bdb_.1_looic = bdb_.1_est$looic,
+              bdb_.1_log.MSE = bdb_.1_est$log.MSE,
+              bdb_.1_per.bias = bdb_.1_est$per.bias,
+              bdb_.1_width_hpd_95 = bdb_.1_est$width_hpd_95,
+              bdb_.1_coverage_95 = bdb_.1_est$coverage_hpd_95,
+              
+              bdb_1_1_TESS = bdb_1_1_est$TESS,
+              bdb_1_1_looic = bdb_1_1_est$looic,
+              bdb_1_1_log.MSE = bdb_1_1_est$log.MSE,
+              bdb_1_1_per.bias = bdb_1_1_est$per.bias,
+              bdb_1_1_width_hpd_95 = bdb_1_1_est$width_hpd_95,
+              bdb_1_1_coverage_95 = bdb_1_1_est$coverage_hpd_95,
+              
+              bdb_1_.1_TESS = bdb_1_.1_est$TESS,
+              bdb_1_.1_looic = bdb_1_.1_est$looic,
+              bdb_1_.1_log.MSE = bdb_1_.1_est$log.MSE,
+              bdb_1_.1_per.bias = bdb_1_.1_est$per.bias,
+              bdb_1_.1_width_hpd_95 = bdb_1_.1_est$width_hpd_95,
+              bdb_1_.1_coverage_95 = bdb_1_.1_est$coverage_hpd_95))
+}
+```
+
+```{r}
+all_results <- pblapply(combined_list, simulation_func)
+```
+
+```{r}
+# Save the list to a .RData file
+save(all_results, file = "H:/ravi_dsi_summer_project/bdb_analysis_V16/all_results_100_26-35.RData")
+```
+
+```{r}
+
+```
+

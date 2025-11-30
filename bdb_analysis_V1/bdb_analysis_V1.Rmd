@@ -1,0 +1,1330 @@
+---
+title: "bdb_analysis_V1"
+author: "Ravinder Singh"
+date: "2024-06-26"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+source("H:/ravi_dsi_summer_project/libraries_and_functions.R")
+```
+
+# This analysis is aimed at creating the simulated DG-NIS data.
+# We will use the DG-01 and DG-02 data sets created in bdb_analysis_V2.
+
+```{r}
+dg1 <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V2/DG-01.csv")
+dg2 <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V2/DG-02.csv")
+```
+
+# Let's first get the Weibull regression coefficients for the DG-01 and DG-02 data sets.
+
+```{r}
+dg1_model <- survreg(Surv(follow_up_time_composite_in_years_RS,
+                          composite)~Age+Female+BMI+Liver_Mets+Hepatic_Imp+Num_Mets_MoreThan2,
+                     dist='weibull', data = dg1)
+
+dg2_model <- survreg(Surv(follow_up_time_composite_in_years_RS,
+                          composite)~Age+Female+BMI+Liver_Mets+Hepatic_Imp+Num_Mets_MoreThan2,
+                     dist='weibull', data = dg2)
+```
+
+```{r}
+num_iters <- 500 # number of different simulated data sets within each setting.
+num_het_conds <- 10 # number of different heterogeneity conditions.
+dg1_coef <- dg1_model$coefficients
+dg2_coef <- dg2_model$coefficients
+avg_coef <- (dg1_coef + dg2_coef)*0.5
+
+# coef_u = true regression coefficient for unmeasured covariate U.
+
+coef_u = 0.5
+```
+
+```{r}
+het_conds_vec <- c("80% less", "50% less", "20% less", "10% less",
+                  "Same", 
+                  "10% more", "20% more", "50% more", "80% more",
+                  "Opposite")
+het_conds_coef_list <- list(c(0.2*avg_coef, coef_u) |> as.matrix(), c(0.5*avg_coef, coef_u)  |> as.matrix(),
+                            c(0.8*avg_coef, coef_u) |> as.matrix(), c(0.9*avg_coef, coef_u) |> as.matrix(),
+                            c(avg_coef, coef_u) |> as.matrix(),
+                            c(1.1*avg_coef, coef_u) |> as.matrix(), c(1.2*avg_coef, coef_u) |> as.matrix(),
+                            c(1.5*avg_coef, coef_u) |> as.matrix(), c(1.8*avg_coef, coef_u) |> as.matrix(),
+                            c(-avg_coef, coef_u) |> as.matrix())
+```
+
+```{r}
+# Let's save these het_conds_coef_list to a data frame.
+
+het_conds_df <- het_conds_coef_list |> as.data.frame()
+names(het_conds_df) <- c("cond1", "cond2", "cond3", "cond4", "cond5",
+                         "cond6", "cond7", "cond8", "cond9", "cond10")
+
+write.csv(het_conds_df, "H:/ravi_dsi_summer_project/bdb_analysis_V1/het_conds.csv")
+```
+
+
+## For number of subjects = 100,
+
+```{r}
+num_subjs <- 100 # number of different subjects
+```
+
+```{r}
+data_full <- expand.grid(1:num_subjs, 1:num_iters, 1:num_het_conds)
+names(data_full) <- c("ID", "Iteration", "Heterogeneity_Level")
+data_full <- data_full |>
+  dplyr::select("Heterogeneity_Level", "Iteration", "ID")
+```
+
+```{r}
+data_full <- data_full |>
+  mutate(`Heterogeneity_Level_Description` = case_when(`Heterogeneity_Level`==1~"80% less",
+                                                     `Heterogeneity_Level`==2~"50% less",
+                                                     `Heterogeneity_Level`==3~"20% less",
+                                                     `Heterogeneity_Level`==4~"10% less",
+                                                     `Heterogeneity_Level`==5~"Same",
+                                                     `Heterogeneity_Level`==6~"10% more",
+                                                     `Heterogeneity_Level`==7~"20% more",
+                                                     `Heterogeneity_Level`==8~"50% more",
+                                                     `Heterogeneity_Level`==9~"80% more",
+                                                     `Heterogeneity_Level`==10~"Opposite"))
+
+data_full <- data_full |>
+  dplyr::select("Heterogeneity_Level_Description", "Heterogeneity_Level", "Iteration", "ID")
+```
+
+```{r}
+# Let's simulate the covariates.
+
+N=num_het_conds*num_iters*num_subjs
+
+# 6 baseline measured covariates
+age <- rnorm(n=N, mean=60, sd=10) |> round(0)
+female <- rbern(n=N, prob=0.25)
+bmi <- rnorm(n=N, mean=22, sd=4) |> round(3)
+liver_mets <- rbern(n=N, prob=0.60)
+hepatic_imp <- rbern(n=N, prob=0.20)
+num_mets_morethan2 <- rbern(n=N, prob=0.85)
+
+# 1 baseline unmeasured covariate
+u <- rnorm(n=N, mean=0, sd=1)
+
+data_full <- data_full |>
+  mutate(Intercept=1,
+         Age=age,
+         Female=female,
+         BMI=bmi,
+         Liver_Mets=liver_mets,
+         Hepatic_Imp=hepatic_imp,
+         Num_Mets_MoreThan2=num_mets_morethan2,
+         U=u)
+```
+
+```{r}
+# Outcome simulation constants.
+
+# lambda = scale parameter in baseline weibull distribution.
+# rho = shape parameter in baseline weibull distribution.
+# rateC = rate parameter of the exponential distribution of censoring times.
+
+lambda = 0.01
+rho = 1
+rateC = 0.005
+```
+
+```{r}
+coef_I = c(rep(het_conds_coef_list[[1]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][1], num_iters*num_subjs))
+
+coef_Age = c(rep(het_conds_coef_list[[1]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][2], num_iters*num_subjs))
+
+coef_Female = c(rep(het_conds_coef_list[[1]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][3], num_iters*num_subjs))
+
+coef_BMI = c(rep(het_conds_coef_list[[1]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][4], num_iters*num_subjs))
+
+coef_Liver_Mets = c(rep(het_conds_coef_list[[1]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][5], num_iters*num_subjs))
+
+coef_Hepatic_Imp = c(rep(het_conds_coef_list[[1]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][6], num_iters*num_subjs))
+
+coef_Num_Mets_MoreThan2 = c(rep(het_conds_coef_list[[1]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][7], num_iters*num_subjs))
+
+coef_U = c(rep(het_conds_coef_list[[1]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][8], num_iters*num_subjs))
+           
+v = runif(n=N)
+C = rexp(n=N, rate=rateC)
+data_full <- data_full |>
+  mutate(v=v,
+         coef_I = coef_I,
+         coef_Age = coef_Age,
+         coef_Female = coef_Female,
+         coef_BMI = coef_BMI,
+         coef_Liver_Mets = coef_Liver_Mets,
+         coef_Hepatic_Imp = coef_Hepatic_Imp,
+         coef_Num_Mets_MoreThan2 = coef_Num_Mets_MoreThan2,
+         coef_U = coef_U,
+         C=C)
+```
+
+```{r}
+data_full <- data_full |>
+  mutate(exp_prod_sum = exp(coef_I*Intercept + coef_Age*Age +
+           coef_Female*Female + coef_BMI*BMI + 
+           coef_Liver_Mets*Liver_Mets + coef_Hepatic_Imp*Hepatic_Imp +
+           coef_Num_Mets_MoreThan2*Num_Mets_MoreThan2 + coef_U*U))
+
+data_full <- data_full |>
+  mutate(Tlat = (-log(v)/(lambda*exp_prod_sum))^(1/rho))
+
+data_full <- data_full |>
+  mutate(time = pmin(Tlat, C),
+         status = as.numeric(Tlat <= C))
+```
+
+```{r}
+data_100 <- data_full
+```
+
+## For number of subjects = 150,
+
+```{r}
+num_subjs <- 150 # number of different subjects
+```
+
+```{r}
+data_full <- expand.grid(1:num_subjs, 1:num_iters, 1:num_het_conds)
+names(data_full) <- c("ID", "Iteration", "Heterogeneity_Level")
+data_full <- data_full |>
+  dplyr::select("Heterogeneity_Level", "Iteration", "ID")
+```
+
+```{r}
+data_full <- data_full |>
+  mutate(`Heterogeneity_Level_Description` = case_when(`Heterogeneity_Level`==1~"80% less",
+                                                     `Heterogeneity_Level`==2~"50% less",
+                                                     `Heterogeneity_Level`==3~"20% less",
+                                                     `Heterogeneity_Level`==4~"10% less",
+                                                     `Heterogeneity_Level`==5~"Same",
+                                                     `Heterogeneity_Level`==6~"10% more",
+                                                     `Heterogeneity_Level`==7~"20% more",
+                                                     `Heterogeneity_Level`==8~"50% more",
+                                                     `Heterogeneity_Level`==9~"80% more",
+                                                     `Heterogeneity_Level`==10~"Opposite"))
+
+data_full <- data_full |>
+  dplyr::select("Heterogeneity_Level_Description", "Heterogeneity_Level", "Iteration", "ID")
+```
+
+```{r}
+# Let's simulate the covariates.
+
+N=num_het_conds*num_iters*num_subjs
+
+# 6 baseline measured covariates
+age <- rnorm(n=N, mean=60, sd=10) |> round(0)
+female <- rbern(n=N, prob=0.25)
+bmi <- rnorm(n=N, mean=22, sd=4) |> round(3)
+liver_mets <- rbern(n=N, prob=0.60)
+hepatic_imp <- rbern(n=N, prob=0.20)
+num_mets_morethan2 <- rbern(n=N, prob=0.85)
+
+# 1 baseline unmeasured covariate
+u <- rnorm(n=N, mean=0, sd=1)
+
+data_full <- data_full |>
+  mutate(Intercept=1,
+         Age=age,
+         Female=female,
+         BMI=bmi,
+         Liver_Mets=liver_mets,
+         Hepatic_Imp=hepatic_imp,
+         Num_Mets_MoreThan2=num_mets_morethan2,
+         U=u)
+```
+
+```{r}
+# Outcome simulation constants.
+
+# lambda = scale parameter in baseline weibull distribution.
+# rho = shape parameter in baseline weibull distribution.
+# rateC = rate parameter of the exponential distribution of censoring times.
+
+lambda = 0.01
+rho = 1
+rateC = 0.005
+```
+
+```{r}
+coef_I = c(rep(het_conds_coef_list[[1]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][1], num_iters*num_subjs))
+
+coef_Age = c(rep(het_conds_coef_list[[1]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][2], num_iters*num_subjs))
+
+coef_Female = c(rep(het_conds_coef_list[[1]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][3], num_iters*num_subjs))
+
+coef_BMI = c(rep(het_conds_coef_list[[1]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][4], num_iters*num_subjs))
+
+coef_Liver_Mets = c(rep(het_conds_coef_list[[1]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][5], num_iters*num_subjs))
+
+coef_Hepatic_Imp = c(rep(het_conds_coef_list[[1]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][6], num_iters*num_subjs))
+
+coef_Num_Mets_MoreThan2 = c(rep(het_conds_coef_list[[1]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][7], num_iters*num_subjs))
+
+coef_U = c(rep(het_conds_coef_list[[1]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][8], num_iters*num_subjs))
+           
+v = runif(n=N)
+C = rexp(n=N, rate=rateC)
+data_full <- data_full |>
+  mutate(v=v,
+         coef_I = coef_I,
+         coef_Age = coef_Age,
+         coef_Female = coef_Female,
+         coef_BMI = coef_BMI,
+         coef_Liver_Mets = coef_Liver_Mets,
+         coef_Hepatic_Imp = coef_Hepatic_Imp,
+         coef_Num_Mets_MoreThan2 = coef_Num_Mets_MoreThan2,
+         coef_U = coef_U,
+         C=C)
+```
+
+```{r}
+data_full <- data_full |>
+  mutate(exp_prod_sum = exp(coef_I*Intercept + coef_Age*Age +
+           coef_Female*Female + coef_BMI*BMI + 
+           coef_Liver_Mets*Liver_Mets + coef_Hepatic_Imp*Hepatic_Imp +
+           coef_Num_Mets_MoreThan2*Num_Mets_MoreThan2 + coef_U*U))
+
+data_full <- data_full |>
+  mutate(Tlat = (-log(v)/(lambda*exp_prod_sum))^(1/rho))
+
+data_full <- data_full |>
+  mutate(time = pmin(Tlat, C),
+         status = as.numeric(Tlat <= C))
+```
+
+```{r}
+data_150 <- data_full
+```
+
+## For number of subjects = 200,
+
+```{r}
+num_subjs <- 200 # number of different subjects
+```
+
+```{r}
+data_full <- expand.grid(1:num_subjs, 1:num_iters, 1:num_het_conds)
+names(data_full) <- c("ID", "Iteration", "Heterogeneity_Level")
+data_full <- data_full |>
+  dplyr::select("Heterogeneity_Level", "Iteration", "ID")
+```
+
+```{r}
+data_full <- data_full |>
+  mutate(`Heterogeneity_Level_Description` = case_when(`Heterogeneity_Level`==1~"80% less",
+                                                     `Heterogeneity_Level`==2~"50% less",
+                                                     `Heterogeneity_Level`==3~"20% less",
+                                                     `Heterogeneity_Level`==4~"10% less",
+                                                     `Heterogeneity_Level`==5~"Same",
+                                                     `Heterogeneity_Level`==6~"10% more",
+                                                     `Heterogeneity_Level`==7~"20% more",
+                                                     `Heterogeneity_Level`==8~"50% more",
+                                                     `Heterogeneity_Level`==9~"80% more",
+                                                     `Heterogeneity_Level`==10~"Opposite"))
+
+data_full <- data_full |>
+  dplyr::select("Heterogeneity_Level_Description", "Heterogeneity_Level", "Iteration", "ID")
+```
+
+```{r}
+# Let's simulate the covariates.
+
+N=num_het_conds*num_iters*num_subjs
+
+# 6 baseline measured covariates
+age <- rnorm(n=N, mean=60, sd=10) |> round(0)
+female <- rbern(n=N, prob=0.25)
+bmi <- rnorm(n=N, mean=22, sd=4) |> round(3)
+liver_mets <- rbern(n=N, prob=0.60)
+hepatic_imp <- rbern(n=N, prob=0.20)
+num_mets_morethan2 <- rbern(n=N, prob=0.85)
+
+# 1 baseline unmeasured covariate
+u <- rnorm(n=N, mean=0, sd=1)
+
+data_full <- data_full |>
+  mutate(Intercept=1,
+         Age=age,
+         Female=female,
+         BMI=bmi,
+         Liver_Mets=liver_mets,
+         Hepatic_Imp=hepatic_imp,
+         Num_Mets_MoreThan2=num_mets_morethan2,
+         U=u)
+```
+
+```{r}
+# Outcome simulation constants.
+
+# lambda = scale parameter in baseline weibull distribution.
+# rho = shape parameter in baseline weibull distribution.
+# rateC = rate parameter of the exponential distribution of censoring times.
+
+lambda = 0.01
+rho = 1
+rateC = 0.005
+```
+
+```{r}
+coef_I = c(rep(het_conds_coef_list[[1]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][1], num_iters*num_subjs))
+
+coef_Age = c(rep(het_conds_coef_list[[1]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][2], num_iters*num_subjs))
+
+coef_Female = c(rep(het_conds_coef_list[[1]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][3], num_iters*num_subjs))
+
+coef_BMI = c(rep(het_conds_coef_list[[1]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][4], num_iters*num_subjs))
+
+coef_Liver_Mets = c(rep(het_conds_coef_list[[1]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][5], num_iters*num_subjs))
+
+coef_Hepatic_Imp = c(rep(het_conds_coef_list[[1]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][6], num_iters*num_subjs))
+
+coef_Num_Mets_MoreThan2 = c(rep(het_conds_coef_list[[1]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][7], num_iters*num_subjs))
+
+coef_U = c(rep(het_conds_coef_list[[1]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][8], num_iters*num_subjs))
+           
+v = runif(n=N)
+C = rexp(n=N, rate=rateC)
+data_full <- data_full |>
+  mutate(v=v,
+         coef_I = coef_I,
+         coef_Age = coef_Age,
+         coef_Female = coef_Female,
+         coef_BMI = coef_BMI,
+         coef_Liver_Mets = coef_Liver_Mets,
+         coef_Hepatic_Imp = coef_Hepatic_Imp,
+         coef_Num_Mets_MoreThan2 = coef_Num_Mets_MoreThan2,
+         coef_U = coef_U,
+         C=C)
+```
+
+```{r}
+data_full <- data_full |>
+  mutate(exp_prod_sum = exp(coef_I*Intercept + coef_Age*Age +
+           coef_Female*Female + coef_BMI*BMI + 
+           coef_Liver_Mets*Liver_Mets + coef_Hepatic_Imp*Hepatic_Imp +
+           coef_Num_Mets_MoreThan2*Num_Mets_MoreThan2 + coef_U*U))
+
+data_full <- data_full |>
+  mutate(Tlat = (-log(v)/(lambda*exp_prod_sum))^(1/rho))
+
+data_full <- data_full |>
+  mutate(time = pmin(Tlat, C),
+         status = as.numeric(Tlat <= C))
+```
+
+```{r}
+data_200 <- data_full
+```
+
+## For number of subjects = 250,
+
+```{r}
+num_subjs <- 250 # number of different subjects
+```
+
+```{r}
+data_full <- expand.grid(1:num_subjs, 1:num_iters, 1:num_het_conds)
+names(data_full) <- c("ID", "Iteration", "Heterogeneity_Level")
+data_full <- data_full |>
+  dplyr::select("Heterogeneity_Level", "Iteration", "ID")
+```
+
+```{r}
+data_full <- data_full |>
+  mutate(`Heterogeneity_Level_Description` = case_when(`Heterogeneity_Level`==1~"80% less",
+                                                     `Heterogeneity_Level`==2~"50% less",
+                                                     `Heterogeneity_Level`==3~"20% less",
+                                                     `Heterogeneity_Level`==4~"10% less",
+                                                     `Heterogeneity_Level`==5~"Same",
+                                                     `Heterogeneity_Level`==6~"10% more",
+                                                     `Heterogeneity_Level`==7~"20% more",
+                                                     `Heterogeneity_Level`==8~"50% more",
+                                                     `Heterogeneity_Level`==9~"80% more",
+                                                     `Heterogeneity_Level`==10~"Opposite"))
+
+data_full <- data_full |>
+  dplyr::select("Heterogeneity_Level_Description", "Heterogeneity_Level", "Iteration", "ID")
+```
+
+```{r}
+# Let's simulate the covariates.
+
+N=num_het_conds*num_iters*num_subjs
+
+# 6 baseline measured covariates
+age <- rnorm(n=N, mean=60, sd=10) |> round(0)
+female <- rbern(n=N, prob=0.25)
+bmi <- rnorm(n=N, mean=22, sd=4) |> round(3)
+liver_mets <- rbern(n=N, prob=0.60)
+hepatic_imp <- rbern(n=N, prob=0.20)
+num_mets_morethan2 <- rbern(n=N, prob=0.85)
+
+# 1 baseline unmeasured covariate
+u <- rnorm(n=N, mean=0, sd=1)
+
+data_full <- data_full |>
+  mutate(Intercept=1,
+         Age=age,
+         Female=female,
+         BMI=bmi,
+         Liver_Mets=liver_mets,
+         Hepatic_Imp=hepatic_imp,
+         Num_Mets_MoreThan2=num_mets_morethan2,
+         U=u)
+```
+
+```{r}
+# Outcome simulation constants.
+
+# lambda = scale parameter in baseline weibull distribution.
+# rho = shape parameter in baseline weibull distribution.
+# rateC = rate parameter of the exponential distribution of censoring times.
+
+lambda = 0.01
+rho = 1
+rateC = 0.005
+```
+
+```{r}
+coef_I = c(rep(het_conds_coef_list[[1]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][1], num_iters*num_subjs))
+
+coef_Age = c(rep(het_conds_coef_list[[1]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][2], num_iters*num_subjs))
+
+coef_Female = c(rep(het_conds_coef_list[[1]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][3], num_iters*num_subjs))
+
+coef_BMI = c(rep(het_conds_coef_list[[1]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][4], num_iters*num_subjs))
+
+coef_Liver_Mets = c(rep(het_conds_coef_list[[1]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][5], num_iters*num_subjs))
+
+coef_Hepatic_Imp = c(rep(het_conds_coef_list[[1]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][6], num_iters*num_subjs))
+
+coef_Num_Mets_MoreThan2 = c(rep(het_conds_coef_list[[1]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][7], num_iters*num_subjs))
+
+coef_U = c(rep(het_conds_coef_list[[1]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][8], num_iters*num_subjs))
+           
+v = runif(n=N)
+C = rexp(n=N, rate=rateC)
+data_full <- data_full |>
+  mutate(v=v,
+         coef_I = coef_I,
+         coef_Age = coef_Age,
+         coef_Female = coef_Female,
+         coef_BMI = coef_BMI,
+         coef_Liver_Mets = coef_Liver_Mets,
+         coef_Hepatic_Imp = coef_Hepatic_Imp,
+         coef_Num_Mets_MoreThan2 = coef_Num_Mets_MoreThan2,
+         coef_U = coef_U,
+         C=C)
+```
+
+```{r}
+data_full <- data_full |>
+  mutate(exp_prod_sum = exp(coef_I*Intercept + coef_Age*Age +
+           coef_Female*Female + coef_BMI*BMI + 
+           coef_Liver_Mets*Liver_Mets + coef_Hepatic_Imp*Hepatic_Imp +
+           coef_Num_Mets_MoreThan2*Num_Mets_MoreThan2 + coef_U*U))
+
+data_full <- data_full |>
+  mutate(Tlat = (-log(v)/(lambda*exp_prod_sum))^(1/rho))
+
+data_full <- data_full |>
+  mutate(time = pmin(Tlat, C),
+         status = as.numeric(Tlat <= C))
+```
+
+```{r}
+data_250 <- data_full
+```
+
+## For number of subjects = 300,
+
+```{r}
+num_subjs <- 300 # number of different subjects
+```
+
+```{r}
+data_full <- expand.grid(1:num_subjs, 1:num_iters, 1:num_het_conds)
+names(data_full) <- c("ID", "Iteration", "Heterogeneity_Level")
+data_full <- data_full |>
+  dplyr::select("Heterogeneity_Level", "Iteration", "ID")
+```
+
+```{r}
+data_full <- data_full |>
+  mutate(`Heterogeneity_Level_Description` = case_when(`Heterogeneity_Level`==1~"80% less",
+                                                     `Heterogeneity_Level`==2~"50% less",
+                                                     `Heterogeneity_Level`==3~"20% less",
+                                                     `Heterogeneity_Level`==4~"10% less",
+                                                     `Heterogeneity_Level`==5~"Same",
+                                                     `Heterogeneity_Level`==6~"10% more",
+                                                     `Heterogeneity_Level`==7~"20% more",
+                                                     `Heterogeneity_Level`==8~"50% more",
+                                                     `Heterogeneity_Level`==9~"80% more",
+                                                     `Heterogeneity_Level`==10~"Opposite"))
+
+data_full <- data_full |>
+  dplyr::select("Heterogeneity_Level_Description", "Heterogeneity_Level", "Iteration", "ID")
+```
+
+```{r}
+# Let's simulate the covariates.
+
+N=num_het_conds*num_iters*num_subjs
+
+# 6 baseline measured covariates
+age <- rnorm(n=N, mean=60, sd=10) |> round(0)
+female <- rbern(n=N, prob=0.25)
+bmi <- rnorm(n=N, mean=22, sd=4) |> round(3)
+liver_mets <- rbern(n=N, prob=0.60)
+hepatic_imp <- rbern(n=N, prob=0.20)
+num_mets_morethan2 <- rbern(n=N, prob=0.85)
+
+# 1 baseline unmeasured covariate
+u <- rnorm(n=N, mean=0, sd=1)
+
+data_full <- data_full |>
+  mutate(Intercept=1,
+         Age=age,
+         Female=female,
+         BMI=bmi,
+         Liver_Mets=liver_mets,
+         Hepatic_Imp=hepatic_imp,
+         Num_Mets_MoreThan2=num_mets_morethan2,
+         U=u)
+```
+
+```{r}
+# Outcome simulation constants.
+
+# lambda = scale parameter in baseline weibull distribution.
+# rho = shape parameter in baseline weibull distribution.
+# rateC = rate parameter of the exponential distribution of censoring times.
+
+lambda = 0.01
+rho = 1
+rateC = 0.005
+```
+
+```{r}
+coef_I = c(rep(het_conds_coef_list[[1]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][1], num_iters*num_subjs))
+
+coef_Age = c(rep(het_conds_coef_list[[1]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][2], num_iters*num_subjs))
+
+coef_Female = c(rep(het_conds_coef_list[[1]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][3], num_iters*num_subjs))
+
+coef_BMI = c(rep(het_conds_coef_list[[1]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][4], num_iters*num_subjs))
+
+coef_Liver_Mets = c(rep(het_conds_coef_list[[1]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][5], num_iters*num_subjs))
+
+coef_Hepatic_Imp = c(rep(het_conds_coef_list[[1]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][6], num_iters*num_subjs))
+
+coef_Num_Mets_MoreThan2 = c(rep(het_conds_coef_list[[1]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][7], num_iters*num_subjs))
+
+coef_U = c(rep(het_conds_coef_list[[1]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][8], num_iters*num_subjs))
+           
+v = runif(n=N)
+C = rexp(n=N, rate=rateC)
+data_full <- data_full |>
+  mutate(v=v,
+         coef_I = coef_I,
+         coef_Age = coef_Age,
+         coef_Female = coef_Female,
+         coef_BMI = coef_BMI,
+         coef_Liver_Mets = coef_Liver_Mets,
+         coef_Hepatic_Imp = coef_Hepatic_Imp,
+         coef_Num_Mets_MoreThan2 = coef_Num_Mets_MoreThan2,
+         coef_U = coef_U,
+         C=C)
+```
+
+```{r}
+data_full <- data_full |>
+  mutate(exp_prod_sum = exp(coef_I*Intercept + coef_Age*Age +
+           coef_Female*Female + coef_BMI*BMI + 
+           coef_Liver_Mets*Liver_Mets + coef_Hepatic_Imp*Hepatic_Imp +
+           coef_Num_Mets_MoreThan2*Num_Mets_MoreThan2 + coef_U*U))
+
+data_full <- data_full |>
+  mutate(Tlat = (-log(v)/(lambda*exp_prod_sum))^(1/rho))
+
+data_full <- data_full |>
+  mutate(time = pmin(Tlat, C),
+         status = as.numeric(Tlat <= C))
+```
+
+```{r}
+data_300 <- data_full
+```
+
+## For number of subjects = 162,
+
+```{r}
+num_subjs <- 162 # number of different subjects
+```
+
+```{r}
+data_full <- expand.grid(1:num_subjs, 1:num_iters, 1:num_het_conds)
+names(data_full) <- c("ID", "Iteration", "Heterogeneity_Level")
+data_full <- data_full |>
+  dplyr::select("Heterogeneity_Level", "Iteration", "ID")
+```
+
+```{r}
+data_full <- data_full |>
+  mutate(`Heterogeneity_Level_Description` = case_when(`Heterogeneity_Level`==1~"80% less",
+                                                     `Heterogeneity_Level`==2~"50% less",
+                                                     `Heterogeneity_Level`==3~"20% less",
+                                                     `Heterogeneity_Level`==4~"10% less",
+                                                     `Heterogeneity_Level`==5~"Same",
+                                                     `Heterogeneity_Level`==6~"10% more",
+                                                     `Heterogeneity_Level`==7~"20% more",
+                                                     `Heterogeneity_Level`==8~"50% more",
+                                                     `Heterogeneity_Level`==9~"80% more",
+                                                     `Heterogeneity_Level`==10~"Opposite"))
+
+data_full <- data_full |>
+  dplyr::select("Heterogeneity_Level_Description", "Heterogeneity_Level", "Iteration", "ID")
+```
+
+```{r}
+# Let's simulate the covariates.
+
+N=num_het_conds*num_iters*num_subjs
+
+# 6 baseline measured covariates
+age <- rnorm(n=N, mean=60, sd=10) |> round(0)
+female <- rbern(n=N, prob=0.25)
+bmi <- rnorm(n=N, mean=22, sd=4) |> round(3)
+liver_mets <- rbern(n=N, prob=0.60)
+hepatic_imp <- rbern(n=N, prob=0.20)
+num_mets_morethan2 <- rbern(n=N, prob=0.85)
+
+# 1 baseline unmeasured covariate
+u <- rnorm(n=N, mean=0, sd=1)
+
+data_full <- data_full |>
+  mutate(Intercept=1,
+         Age=age,
+         Female=female,
+         BMI=bmi,
+         Liver_Mets=liver_mets,
+         Hepatic_Imp=hepatic_imp,
+         Num_Mets_MoreThan2=num_mets_morethan2,
+         U=u)
+```
+
+```{r}
+# Outcome simulation constants.
+
+# lambda = scale parameter in baseline weibull distribution.
+# rho = shape parameter in baseline weibull distribution.
+# rateC = rate parameter of the exponential distribution of censoring times.
+
+lambda = 0.01
+rho = 1
+rateC = 0.005
+```
+
+```{r}
+coef_I = c(rep(het_conds_coef_list[[1]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][1], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][1], num_iters*num_subjs))
+
+coef_Age = c(rep(het_conds_coef_list[[1]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][2], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][2], num_iters*num_subjs))
+
+coef_Female = c(rep(het_conds_coef_list[[1]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][3], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][3], num_iters*num_subjs))
+
+coef_BMI = c(rep(het_conds_coef_list[[1]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][4], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][4], num_iters*num_subjs))
+
+coef_Liver_Mets = c(rep(het_conds_coef_list[[1]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][5], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][5], num_iters*num_subjs))
+
+coef_Hepatic_Imp = c(rep(het_conds_coef_list[[1]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][6], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][6], num_iters*num_subjs))
+
+coef_Num_Mets_MoreThan2 = c(rep(het_conds_coef_list[[1]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][7], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][7], num_iters*num_subjs))
+
+coef_U = c(rep(het_conds_coef_list[[1]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[2]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[3]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[4]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[5]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[6]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[7]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[8]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[9]][8], num_iters*num_subjs),
+           rep(het_conds_coef_list[[10]][8], num_iters*num_subjs))
+           
+v = runif(n=N)
+C = rexp(n=N, rate=rateC)
+data_full <- data_full |>
+  mutate(v=v,
+         coef_I = coef_I,
+         coef_Age = coef_Age,
+         coef_Female = coef_Female,
+         coef_BMI = coef_BMI,
+         coef_Liver_Mets = coef_Liver_Mets,
+         coef_Hepatic_Imp = coef_Hepatic_Imp,
+         coef_Num_Mets_MoreThan2 = coef_Num_Mets_MoreThan2,
+         coef_U = coef_U,
+         C=C)
+```
+
+```{r}
+data_full <- data_full |>
+  mutate(exp_prod_sum = exp(coef_I*Intercept + coef_Age*Age +
+           coef_Female*Female + coef_BMI*BMI + 
+           coef_Liver_Mets*Liver_Mets + coef_Hepatic_Imp*Hepatic_Imp +
+           coef_Num_Mets_MoreThan2*Num_Mets_MoreThan2 + coef_U*U))
+
+data_full <- data_full |>
+  mutate(Tlat = (-log(v)/(lambda*exp_prod_sum))^(1/rho))
+
+data_full <- data_full |>
+  mutate(time = pmin(Tlat, C),
+         status = as.numeric(Tlat <= C))
+```
+
+```{r}
+data_162 <- data_full
+```
+
+```{r}
+# Let's add a column for sample size and study.
+
+data_100 <- data_100 |>
+  mutate(Sample_Size= 100,
+         Study = 3)
+
+data_150 <- data_150 |>
+  mutate(Sample_Size= 150,
+         Study = 3)
+
+data_200 <- data_200 |>
+  mutate(Sample_Size= 200,
+         Study = 3)
+
+data_250 <- data_250 |>
+  mutate(Sample_Size= 250,
+         Study = 3)
+
+data_300 <- data_300 |>
+  mutate(Sample_Size= 300,
+         Study = 3)
+
+data_162 <- data_162 |>
+  mutate(Sample_Size= 162,
+         Study = 3)
+```
+
+```{r}
+data_all <- rbind(data_100, data_150, data_200, data_250, data_300, data_162)
+```
+
+```{r}
+# Let's choose only columns that what we need.
+
+data_all <- data_all |>
+  dplyr::select("Sample_Size", "Heterogeneity_Level",
+                "Iteration",
+                "Study",
+                "ID",
+                "Age", "Female", "BMI", "Liver_Mets", "Hepatic_Imp", "Num_Mets_MoreThan2",
+                "status", "time")
+
+names(data_all) <- c("Sample_Size", "Heterogeneity_Level",
+                "Iteration",
+                "Study",
+                "ID",
+                "Age", "Female", "BMI", "Liver_Mets", "Hepatic_Imp", "Num_Mets_MoreThan2",
+                "composite", "follow_up_time_composite_in_days_RS")
+```
+
+# We now have to make the DG-01 and DG-02 data sets' columns similarly aligned.
+
+```{r}
+dg1 <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V2/DG-01.csv")
+dg2 <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V2/DG-02.csv")
+```
+
+```{r}
+dg1 <- dg1 |>
+  dplyr::select("Study",
+                "ID",
+                "Age", "Female", "BMI", "Liver_Mets", "Hepatic_Imp", "Num_Mets_MoreThan2",
+                "composite", "follow_up_time_composite_in_days_RS")
+
+dg2 <- dg2 |>
+  dplyr::select("Study",
+                "ID",
+                "Age", "Female", "BMI", "Liver_Mets", "Hepatic_Imp", "Num_Mets_MoreThan2",
+                "composite", "follow_up_time_composite_in_days_RS")
+```
+
+```{r}
+write.csv(dg1, "H:/ravi_dsi_summer_project/bdb_analysis_V1/dg1.csv")
+
+write.csv(dg2, "H:/ravi_dsi_summer_project/bdb_analysis_V1/dg2.csv")
+
+write.csv(data_all, "H:/ravi_dsi_summer_project/bdb_analysis_V1/data_all.csv")
+```
+
+```{r}
+# Preparing the one single instance of simulated data, which will be used for bdb_analysis_V3.
+data_all_1 <- data_all |>
+  filter(Sample_Size==100, 
+         Heterogeneity_Level==1,
+         Iteration==1)
+
+data_all_1 <- data_all_1 |>
+  dplyr::select(-c("Sample_Size", "Heterogeneity_Level","Iteration"))
+```
+
+```{r}
+# Data with all 3 studies combined.
+
+dt_1_iteration <- rbind(dg1, dg2, data_all_1)
+```
+
+```{r}
+write.csv(dt_1_iteration, "H:/ravi_dsi_summer_project/bdb_analysis_V1/dt_1_iteration.csv")
+```
+
+```{r}
+
+```
+

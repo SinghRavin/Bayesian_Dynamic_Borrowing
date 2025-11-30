@@ -1,0 +1,243 @@
+---
+title: "bdb_analysis_V22"
+date: "2024-08-11"
+author: "Ravinder Singh"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+```
+
+# This analysis is aimed to analyze the results that are obtained in 'bdb_analysis_V20'.
+
+```{r}
+results_full <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V20/results_full.csv")
+```
+
+```{r}
+results_full <- results_full |>
+  mutate(Heterogeneity_Level_Name = factor(Heterogeneity_Level_Name,
+                                           levels = c("50% less", "Same", "50% more", "Opposite"),
+                                           labels = c("50% less", "Same", "50% more", "Opposite")),
+         
+         Variable_Name = factor(Variable_Name,
+                                levels = c("Intercept", "Age", "Female", "BMI", "Liver_Mets",
+                                           "Hepatic_Imp", "Num_Mets_MoreThan2"),
+                                labels = c("Intercept", "Age", "Female", "BMI", "Liver_Mets",
+                                           "Hepatic_Imp", "Num_Mets_MoreThan2")),
+         
+         Prior_Setting = factor(Prior_Setting,
+                                levels = c("Complete Pooling", "Non-Informative",
+                                           "PP(0)", "PP(0.5)", "PP(1)",
+                                           "BDB(0.1, 0.1)", "BDB(1, 1)", "BDB(1, 0.1)"),
+                                labels = c("Complete Pooling", "Non-Informative",
+                                           "PP(0)", "PP(0.5)", "PP(1)",
+                                           "BDB(0.1, 0.1)", "BDB(1, 1)", "BDB(1, 0.1)")),
+         Sample_Size = factor(Sample_Size,
+                              levels = c(100, 162),
+                              labels = c("Sample Size = 100", "Sample Size = 162")))
+```
+
+```{r}
+results_full <- results_full |>
+  mutate(Prior_Setting_Class = case_when(Prior_Setting %in% c("Complete Pooling") ~ "Complete Pooling",
+                                         Prior_Setting %in% c("Non-Informative") ~ "Non-Informative",
+                                         Prior_Setting %in% c("PP(0)", "PP(0.5)", "PP(1)") ~ "Power Priors",
+                                         Prior_Setting %in% c("BDB(0.1, 0.1)", "BDB(1, 1)", "BDB(1, 0.1)") ~ "Bayesian Dynamic Borrowing"))
+
+results_full <- results_full |>
+  mutate(Prior_Setting_Class = factor(Prior_Setting_Class,
+                                      levels = c("Complete Pooling", "Non-Informative",
+                                                 "Power Priors", "Bayesian Dynamic Borrowing")))
+```
+
+```{r}
+avg_results <- results_full |>
+  group_by(Sample_Size, Heterogeneity_Level_Name, Prior_Setting_Class) |>
+  summarise(TESS = mean(TESS),
+            looic = mean(looic),
+            log.MSE = mean(log.MSE),
+            per.bias = mean(per.bias),
+            width_hpd_95 = mean(width_hpd_95),
+            coverage_95 = mean(coverage_95))
+```
+
+```{r}
+# avg_results <- avg_results |>
+#   mutate(Prior_Setting_Class = case_when(Prior_Setting %in% c("Complete Pooling") ~ "Comp-Pool",
+#                                          Prior_Setting %in% c("Non-Informative") ~ "Non-Inf",
+#                                          Prior_Setting %in% c("PP(0)", "PP(0.5)", "PP(1)") ~ "PP",
+#                                          Prior_Setting %in% c("BDB(0.1, 0.1)", "BDB(1, 1)", "BDB(1, 0.1)") ~ "BDB"))
+# 
+# avg_results <- avg_results |>
+#   mutate(Prior_Setting_Class = factor(Prior_Setting_Class,
+#                                       levels = c("Comp-Pool", "Non-Inf", "PP", "BDB")))
+```
+
+
+# Now, let's plot some stuff.
+
+For, looic
+
+```{r}
+ggplot(avg_results, aes(x = Heterogeneity_Level_Name, y = looic, color = Prior_Setting_Class)) +
+  geom_point(size = 3) +  # Add points to represent each observation
+  geom_line(aes(group = interaction(Prior_Setting_Class, Sample_Size)), linetype = "dashed") +  # Add lines connecting the points within groups
+  facet_grid(~Sample_Size) +  # Facet by sample size
+  labs(
+    title = "",
+    x = "Heterogeneity Level",
+    y = "Leave-One-Out Information Criterion",
+    color = "Prior/Borrowing Setting"
+  ) +
+  theme_minimal(base_size = 18) +  # Increase the base size for all text elements
+  theme(
+    axis.title.x = element_text(size = 20),  # Increase x-axis title size
+    axis.title.y = element_text(size = 20),  # Increase y-axis title size
+    axis.text.x = element_text(size = 14),   # Increase x-axis text size
+    axis.text.y = element_text(size = 14),   # Increase y-axis text size
+    strip.text = element_text(size = 18),    # Increase facet label text size
+    legend.title = element_text(size = 18),  # Increase legend title size
+    legend.text = element_text(size = 16)    # Increase legend text size
+  )
+```
+
+For, TESS
+
+```{r}
+ggplot(avg_results, aes(x = Heterogeneity_Level_Name, y = TESS, color = Prior_Setting_Class)) +
+  geom_point(size = 3) +  # Add points to represent each observation
+  geom_line(aes(group = interaction(Prior_Setting_Class, Sample_Size)), linetype = "dashed") +  # Add lines connecting the points within groups
+  facet_grid(~Sample_Size) +  # Facet by sample size
+  labs(
+    title = "",
+    x = "Heterogeneity Level",
+    y = "Total Effective Sample Size",
+    color = "Prior/Borrowing Setting"
+  ) +
+  theme_minimal(base_size = 18) +  # Increase the base size for all text elements
+  theme(
+    axis.title.x = element_text(size = 20),  # Increase x-axis title size
+    axis.title.y = element_text(size = 20),  # Increase y-axis title size
+    axis.text.x = element_text(size = 14),   # Increase x-axis text size
+    axis.text.y = element_text(size = 14),   # Increase y-axis text size
+    strip.text = element_text(size = 18),    # Increase facet label text size
+    legend.title = element_text(size = 18),  # Increase legend title size
+    legend.text = element_text(size = 16)    # Increase legend text size
+  )
+```
+
+For, log.MSE
+
+```{r}
+ggplot(avg_results, aes(x = Heterogeneity_Level_Name, y = log.MSE, color = Prior_Setting_Class)) +
+  geom_point(size = 3) +  # Add points to represent each observation
+  geom_line(aes(group = interaction(Prior_Setting_Class, Sample_Size)), linetype = "dashed") +  # Add lines connecting the points within groups
+  facet_grid(~Sample_Size) +  # Facet by sample size
+  labs(
+    title = "",
+    x = "Heterogeneity Level",
+    y = "Logarithm of Mean Squared Error",
+    color = "Prior/Borrowing Setting"
+  ) +
+  theme_minimal(base_size = 18) +  # Increase the base size for all text elements
+  theme(
+    axis.title.x = element_text(size = 20),  # Increase x-axis title size
+    axis.title.y = element_text(size = 20),  # Increase y-axis title size
+    axis.text.x = element_text(size = 14),   # Increase x-axis text size
+    axis.text.y = element_text(size = 14),   # Increase y-axis text size
+    strip.text = element_text(size = 18),    # Increase facet label text size
+    legend.title = element_text(size = 18),  # Increase legend title size
+    legend.text = element_text(size = 16)    # Increase legend text size
+  )
+```
+
+For, per.bias
+
+```{r}
+ggplot(avg_results, aes(x = Heterogeneity_Level_Name, y = per.bias, color = Prior_Setting_Class)) +
+  geom_point(size = 3) +  # Add points to represent each observation
+  geom_line(aes(group = interaction(Prior_Setting_Class, Sample_Size)), linetype = "dashed") +  # Add lines connecting the points within groups
+  facet_grid(~Sample_Size) +  # Facet by sample size
+  labs(
+    title = "",
+    x = "Heterogeneity Level",
+    y = "Percentage Bias",
+    color = "Prior/Borrowing Setting"
+  ) +
+  theme_minimal(base_size = 18) +  # Increase the base size for all text elements
+  theme(
+    axis.title.x = element_text(size = 20),  # Increase x-axis title size
+    axis.title.y = element_text(size = 20),  # Increase y-axis title size
+    axis.text.x = element_text(size = 14),   # Increase x-axis text size
+    axis.text.y = element_text(size = 14),   # Increase y-axis text size
+    strip.text = element_text(size = 18),    # Increase facet label text size
+    legend.title = element_text(size = 18),  # Increase legend title size
+    legend.text = element_text(size = 16)    # Increase legend text size
+  )
+```
+
+For, widht_hpd_95
+
+```{r}
+ggplot(avg_results, aes(x = Heterogeneity_Level_Name, y = width_hpd_95, color = Prior_Setting_Class)) +
+  geom_point(size = 3) +  # Add points to represent each observation
+  geom_line(aes(group = interaction(Prior_Setting_Class, Sample_Size)), linetype = "dashed") +  # Add lines connecting the points within groups
+  facet_grid(~Sample_Size) +  # Facet by sample size
+  labs(
+    title = "",
+    x = "Heterogeneity Level",
+    y = "Width of 95% HPD Credible Interval",
+    color = "Prior/Borrowing Setting"
+  ) +
+  theme_minimal(base_size = 18) +  # Increase the base size for all text elements
+  theme(
+    axis.title.x = element_text(size = 20),  # Increase x-axis title size
+    axis.title.y = element_text(size = 20),  # Increase y-axis title size
+    axis.text.x = element_text(size = 14),   # Increase x-axis text size
+    axis.text.y = element_text(size = 14),   # Increase y-axis text size
+    strip.text = element_text(size = 18),    # Increase facet label text size
+    legend.title = element_text(size = 18),  # Increase legend title size
+    legend.text = element_text(size = 16)    # Increase legend text size
+  )
+```
+
+For, coverage_95
+
+```{r}
+ggplot(avg_results, aes(x = Heterogeneity_Level_Name, y = coverage_95, color = Prior_Setting_Class)) +
+  geom_point(size = 3) +  # Add points to represent each observation
+  geom_line(aes(group = interaction(Prior_Setting_Class, Sample_Size)), linetype = "dashed") +  # Add lines connecting the points within groups
+  facet_grid(~Sample_Size) +  # Facet by sample size
+  labs(
+    title = "",
+    x = "Heterogeneity Level",
+    y = "Coverage of 95% HPD Credible Interval",
+    color = "Prior/Borrowing Setting"
+  ) +
+  theme_minimal(base_size = 18) +  # Increase the base size for all text elements
+  theme(
+    axis.title.x = element_text(size = 20),  # Increase x-axis title size
+    axis.title.y = element_text(size = 20),  # Increase y-axis title size
+    axis.text.x = element_text(size = 14),   # Increase x-axis text size
+    axis.text.y = element_text(size = 14),   # Increase y-axis text size
+    strip.text = element_text(size = 18),    # Increase facet label text size
+    legend.title = element_text(size = 18),  # Increase legend title size
+    legend.text = element_text(size = 16)    # Increase legend text size
+  )
+```
+
+
+```{r}
+
+```
+

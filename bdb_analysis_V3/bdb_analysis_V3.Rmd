@@ -1,0 +1,476 @@
+---
+title: "bdb_analysis_V3"
+author: "Ravinder Singh"
+date: "2024-07-09"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+source("H:/ravi_dsi_summer_project/libraries_and_functions.R")
+```
+
+# This analysis is aimed at preparing the R code for running just one iteration of R Stan code simulation.
+
+```{r}
+df <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V1/dt_1_iteration.csv")
+df$X <- NULL
+```
+
+```{r}
+het_conds <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V1/het_conds.csv")
+```
+
+```{r}
+data.stan <- function(dat_combined) {
+  dat <- dat_combined[rank(dat_combined$Study, ties.method = 'first'), ]
+  x <- cbind(Intercept = 1, dat[, 3:8])
+  status <- dat$composite
+  time <- dat$follow_up_time_composite_in_days_RS
+  study <- dat$Study
+  N <- nrow(x) # number of patients
+  M <- ncol(x) # number of covariates + intercept
+  S <- length(unique(study)) # number of studies
+  NN <- sum(study == 3) # number of patients in prosperity
+  list(N = N, M = M, S = S, NN = NN, x = x, status = status, time = time, study = study)
+}
+```
+
+```{r}
+#measurement
+
+MSE <- function(y.true, y.pred){(y.true-y.pred)^2}
+bias <- function(y.true, y.pred){(y.pred-y.true)}
+abs.bias <- function(y.true, y.pred){abs(y.pred-y.true)}
+per.bias <- function(y.true, y.pred){(y.pred-y.true)/y.true}
+abs.per.bias <- function(y.true, y.pred){abs((y.pred-y.true)/y.true)}
+```
+
+```{r}
+cf <- het_conds$cond1
+cf <- cf[1:7]
+```
+
+```{r}
+total_obs <- nrow(df)
+rstan_iters <- 10000
+n.chains <- 3
+```
+
+```{r}
+current_time <- Sys.time()
+```
+
+# Complete pooling
+
+```{r}
+modelstring <- '
+data {
+  int<lower = 1> N;                    // number of patients
+  int<lower = 1> M;                    // number of covariates + intercept
+  int<lower = 1> S;                    // number of studies
+  int<lower = 1> NN;                   // number of patients in prosperity
+  matrix[N, M] x;                      // covariates
+  real<lower=0> time[N];               // survival times
+  int<lower = 0, upper = 1> status[N]; // censoring indicator (1 = observed, 0 = censored)
+  int<lower = 1, upper = 3> study[N];  // studies
+}
+
+transformed data {
+  vector[M] mu_x;
+  vector[M] sd_x;
+  matrix[N, M] x_std;
+  
+  // x[, 1] is the intercept
+  x_std[, 1] = x[, 1];
+  for (m in 2:M) {
+    mu_x[m] = mean(x[, m]);
+    sd_x[m] = sd(x[, m]);
+    x_std[, m] = (x[, m] - mu_x[m]) / sd_x[m];
+  }
+}
+
+parameters {
+  vector[M] beta_std;
+  real<lower = 0> alpha;              // shape parameter for Weibull
+}
+
+model {
+  vector[N] log_lambda;
+
+  beta_std ~ normal(0, 100);
+  alpha ~ cauchy(0, 2);
+  
+  log_lambda = x_std * beta_std;
+
+  for (n in 1:N) {
+    if (status[n] == 1) {
+      target += weibull_lpdf(time[n] | alpha, exp(log_lambda[n]));
+    } else {
+      target += weibull_lccdf(time[n] | alpha, exp(log_lambda[n]));
+    }
+  }
+}
+
+generated quantities {
+  vector[M] beta;
+  vector[NN] log_lik;
+
+  // Transform the coefficients back
+  beta[1] = beta_std[1];
+  for (m in 2:M) {
+    beta[m] = beta_std[m] / sd_x[m];
+    beta[1] -= beta[m] * mu_x[m];
+  }
+
+  for (n in 1:NN) {
+    if (status[n] == 1) {
+      log_lik[n] = weibull_lpdf(time[n] | alpha, exp(x[n, ] * beta));
+    } else {
+      log_lik[n] = weibull_lccdf(time[n] | alpha, exp(x[n, ] * beta));
+    }
+  }
+}
+'
+```
+
+```{r}
+my.bwr.pool <- function(dat_combined) {
+  writeLines(modelstring, con = 'modelBWR.stan')
+  data <- data.stan(dat_combined)
+  stan('modelBWR.stan', data = data, iter = rstan_iters, chains = n.chains)
+}
+```
+
+```{r}
+# complete pooling
+bwr.pool <- my.bwr.pool(df)
+```
+
+```{r}
+# This will 'pool.var' be used to calculate the TESS for each of the prior setting.
+
+est <- summary(bwr.pool)$summary
+beta <- est[grep('^beta\\[', rownames(est)), ][1:7, ]
+pool_var <- beta[,"sd"]^2 |> as.numeric()
+```
+
+```{r}
+log_sum_exp <- function(log_lik) {
+  max_log_lik <- max(log_lik)
+  return(max_log_lik + log(sum(exp(log_lik - max_log_lik))))
+}
+
+extract.stan <- function(fit, M = 7, coef = cf, pool.var = pool_var, total.obs = total_obs) {
+  est <- summary(fit)$summary
+  beta <-  est[grep('^beta\\[', rownames(est)), ][1:M, ]
+  log_lik_matrix <- extract_log_lik(fit)
+  
+  # Calculate the point wise log-likelihoods
+  pointwise_log_lik <- apply(log_lik_matrix, 1, function(log_lik_i) {
+    log_sum_exp(log_lik_i) - log(length(log_lik_i))
+    })
+  
+  # Calculate coverage
+  coverage_95 <- sapply(1:M, function(i) {
+    coef[i] >= beta[i, "2.5%"] && coef[i] <= beta[i, "97.5%"]
+    })
+  
+  # Extract HPD intervals
+  hpd_intervals_95 <- sapply(1:M, function(i) {
+    list(lower = beta[i, "2.5%"], upper = beta[i, "97.5%"])
+  })
+  
+  # Variance of the posterior distribution of each effect.
+  var <- beta[,"sd"]^2
+  
+  list(beta = beta,
+       waic = waic(extract_log_lik(fit))$estimates[2:3, 1],
+       looic = loo(fit)$estimates[2:3, 1],
+       elpd = sum(pointwise_log_lik),
+       MSE = MSE(coef, beta[, 1]),
+       bias = bias(coef, beta[, 1]),
+       abs.bias = abs.bias(coef, beta[, 1]),
+       per.bias = per.bias(coef, beta[, 1]),
+       abs.per.bias = abs.per.bias(coef, beta[, 1]),
+       coverage_95 = coverage_95,
+       hpd_intervals_95 = hpd_intervals_95,
+       TESS = total.obs*(pool.var/var))
+}
+```
+
+```{r}
+extract.bdb <- function(fit, M = 7, coef = cf, pool.var = pool_var, total.obs = total_obs) {
+  est <- summary(fit)$summary
+  beta <- est[grep('^beta\\[', rownames(est)), ][1:M, ]
+  alpha <- est[grep('^alpha', rownames(est)), 1]
+  log_lik_matrix <- extract_log_lik(fit)
+  
+  # Calculate the point wise log-likelihoods
+  pointwise_log_lik <- apply(log_lik_matrix, 1, function(log_lik_i) {
+  log_sum_exp(log_lik_i) - log(length(log_lik_i))
+  })
+  
+  # Calculate coverage
+  coverage_95 <- sapply(1:M, function(i) {
+    coef[i] >= beta[i, "2.5%"] && coef[i] <= beta[i, "97.5%"]
+    })
+  
+  # Extract HPD intervals
+  hpd_intervals_95 <- sapply(1:M, function(i) {
+    list(lower = beta[i, "2.5%"], upper = beta[i, "97.5%"])
+  })
+  
+  # Variance of the posterior distribution of each effect.
+  var <- beta[,"sd"]^2
+  
+  list(beta = beta,
+       alpha=alpha,
+       mu_std = est[grep('^mu_std\\[', rownames(est)), 1],
+       waic = waic(extract_log_lik(fit))$estimates[2:3, 1],
+       looic = loo(fit)$estimates[2:3, 1],
+       elpd = sum(pointwise_log_lik),
+       MSE = MSE(coef, beta[, 1]),
+       bias = bias(coef, beta[, 1]),
+       abs.bias = abs.bias(coef, beta[, 1]),
+       per.bias = per.bias(coef, beta[, 1]),
+       abs.per.bias = abs.per.bias(coef, beta[, 1]),
+       coverage_95 = coverage_95,
+       hpd_intervals_95 = hpd_intervals_95,
+       TESS = total.obs*(pool.var/var))
+}
+```
+
+```{r}
+est.bwr.pool <- extract.stan(bwr.pool)
+```
+
+# Non-informative
+
+```{r}
+my.bwr <- function(dat_combined) {
+  writeLines(modelstring, con = 'modelBWR.stan')
+  data <- data.stan(subset(dat_combined, Study == 3))
+  stan('modelBWR.stan', data = data, iter = rstan_iters, chains = n.chains)
+}
+```
+
+```{r}
+# non-informative
+bwr.non.inf <- my.bwr(df)
+est.bwr.non.inf <- extract.stan(bwr.non.inf)
+```
+
+# Static power priors
+
+```{r}
+modelstring.pp <- '
+data {
+  int<lower = 1> N;                     // number of patients
+  int<lower = 1> M;                     // number of covariates + intercept
+  int<lower = 1> S;                     // number of studies
+  int<lower = 1> NN;                    // number of patients in prosperity
+  matrix[N, M] x;                       // covariates
+  real<lower=0> time[N];                // survival times
+  int<lower = 1, upper = S> study[N];   // studies
+  vector<lower = 0, upper = 1>[S] a;    // weight for each study
+  int<lower = 0, upper = 1> status[N];  // censoring indicator (0 for censored, 1 for observed)
+}
+
+transformed data {
+  vector[M] mu_x;
+  vector[M] sd_x;
+  matrix[N, M] x_std;
+  
+  // x[, 1] is the intercept
+  x_std[, 1] = x[, 1];
+  for (m in 2:M) {
+    mu_x[m] = mean(x[, m]);
+    sd_x[m] = sd(x[, m]);
+    x_std[, m] = (x[, m] - mu_x[m]) / sd_x[m];
+  }
+}
+
+parameters {
+  vector[M] beta_std;
+  real<lower = 0> shape;  // Weibull shape parameter
+  real<lower = 0> scale;  // Weibull scale parameter
+}
+
+model {
+  beta_std ~ normal(0, 100);
+  shape ~ cauchy(0, 2);
+  scale ~ cauchy(0, 2);
+  
+  for (n in 1:N) {
+    if (status[n] == 1) {
+      target += a[study[n]] * weibull_lpdf(time[n] | shape, scale * exp(x_std[n, ] * beta_std));
+    } else {
+      target += a[study[n]] * weibull_lccdf(time[n] | shape, scale * exp(x_std[n, ] * beta_std));
+    }
+  }
+}
+
+generated quantities {
+  vector[M] beta;
+  vector[NN] log_lik;
+  
+  // Transform the coefficients back
+  beta[1] = beta_std[1];
+  for (m in 2:M) {
+    beta[m] = beta_std[m] / sd_x[m];
+    beta[1] -= beta[m] * mu_x[m];
+  }
+  
+  for (n in 1:NN) {
+    if (status[n] == 1) {
+      log_lik[n] = weibull_lpdf(time[n] | shape, scale * exp(x[n, ] * beta));
+    } else {
+      log_lik[n] = weibull_lccdf(time[n] | shape, scale * exp(x[n, ] * beta));
+    }
+  }
+}
+'
+```
+
+```{r}
+my.pp <- function(dat_combined, a = 0.5) {
+  writeLines(modelstring.pp, con = 'modelPP.stan')
+  data <- data.stan(dat_combined)
+  data$a <- c(1, rep(a, data$S - 1))
+  stan('modelPP.stan', data = data, iter = rstan_iters, chains = n.chains)
+}
+```
+
+```{r}
+# pp
+pp.0 <- my.pp(df, a = 0)
+pp.25 <- my.pp(df, a = 0.25)
+pp.50 <- my.pp(df, a = 0.50)
+pp.75 <- my.pp(df, a = 0.75)
+pp.1 <- my.pp(df, a = 1)
+
+est.pp.0 <- extract.stan(pp.0)
+est.pp.25 <- extract.stan(pp.25)
+est.pp.50 <- extract.stan(pp.50)
+est.pp.75 <- extract.stan(pp.75)
+est.pp.1 <- extract.stan(pp.1)
+```
+
+# Bayesian Dynamic Borrowing Priors.
+
+```{r}
+modelstring.bdb <- '
+data {
+  int<lower = 1> N;                    // number of patients
+  int<lower = 1> M;                    // number of covariates + intercept
+  int<lower = 1> S;                    // number of studies
+  int<lower = 1> NN;                   // number of patients in prosperity
+  matrix[N, M] x;                      // covariates
+  real<lower = 0> time[N];             // survival times
+  int<lower = 0, upper = 1> status[N]; // censoring indicators (1 = event, 0 = censored)
+  int<lower = 1, upper = S> study[N];  // studies
+  real<lower = 0> nu1;                 // prior: tau2_beta ~ inv_gamma(nu1, nu2)
+  real<lower = 0> nu2;                 // prior: tau2_beta ~ inv_gamma(nu1, nu2)
+}
+
+transformed data {
+  vector[M] mu_x;
+  vector[M] sd_x;
+  matrix[N, M] x_std;
+
+  // Standardize the covariates
+  x_std[, 1] = x[, 1];  // intercept does not need standardization
+  for (m in 2:M) {
+    mu_x[m] = mean(x[, m]);
+    sd_x[m] = sd(x[, m]);
+    x_std[, m] = (x[, m] - mu_x[m]) / sd_x[m];
+  }
+}
+
+parameters {
+  vector[M] beta_std[S];
+  vector[M] mu_std;
+  vector<lower = 0>[M] tau2_beta;
+  real<lower = 0> alpha;  // shape parameter for Weibull distribution
+}
+
+model {
+  for (s in 1:S)
+    beta_std[s] ~ normal(mu_std, sqrt(tau2_beta));
+  mu_std ~ normal(0, 100);
+  tau2_beta ~ inv_gamma(nu1, nu2);
+  
+  for (n in 1:N) {
+    if (status[n] == 1)
+      target += weibull_lpdf(time[n] | alpha, exp(x_std[n, ] * beta_std[study[n]]));
+    else
+      target += weibull_lccdf(time[n] | alpha, exp(x_std[n, ] * beta_std[study[n]]));
+  }
+  alpha ~ cauchy(0, 2);
+}
+
+generated quantities {
+  vector[M] beta;
+  vector[NN] log_lik;
+
+  beta[1] = beta_std[1, 1];
+  for (m in 2:M) {
+    beta[m] = beta_std[1, m] / sd_x[m];
+    beta[1] -= beta[m] * mu_x[m];
+  }
+
+  for (n in 1:NN) {
+    if (status[n] == 1)
+      log_lik[n] = weibull_lpdf(time[n] | alpha, exp(x_std[n, ] * beta));
+    else
+      log_lik[n] = weibull_lccdf(time[n] | alpha, exp(x_std[n, ] * beta));
+  }
+}
+'
+```
+
+```{r}
+my.bdb <- function(dat_combined, nu1 = 0.001, nu2 = 0.001) {
+  writeLines(modelstring.bdb, con = 'modelBDB.stan')
+  data <- data.stan(dat_combined)
+  data$nu1 <- nu1
+  data$nu2 <- nu2
+  stan('modelBDB.stan', data = data, iter = rstan_iters, chains = n.chains)
+}
+```
+
+```{r}
+# bdb
+bdb_.001 <- my.bdb(df, nu1 = .001, nu2 = .001)
+bdb_.01 <- my.bdb(df, nu1 = .01, nu2 = .01)
+bdb_.1 <- my.bdb(df, nu1 = .1, nu2 = .1)
+bdb_1_1 <- my.bdb(df, nu1 = 1, nu2 = 1)
+bdb_1_.1 <- my.bdb(df, nu1 = 1, nu2 = .1)
+bdb_1_.01 <- my.bdb(df, nu1 = 1, nu2 = .01)
+bdb_1_.001 <- my.bdb(df, nu1 = 1, nu2 = .001)
+bdb_1_3 <- my.bdb(df, nu1 = 1, nu2 = 3)
+
+est.bdb_.001 <- extract.bdb(bdb_.001)
+est.bdb_.01 <- extract.bdb(bdb_.01)
+est.bdb_.1 <- extract.bdb(bdb_.1)
+est.bdb_1_1 <- extract.bdb(bdb_1_1)
+est.bdb_1_.1 <- extract.bdb(bdb_1_.1)
+est.bdb_1_.01 <- extract.bdb(bdb_1_.01)
+est.bdb_1_.001 <- extract.bdb(bdb_1_.001)
+est.bdb_1_3 <- extract.bdb(bdb_1_3)
+```
+
+```{r}
+Sys.time() - current_time
+```
+
+```{r}
+
+```
+

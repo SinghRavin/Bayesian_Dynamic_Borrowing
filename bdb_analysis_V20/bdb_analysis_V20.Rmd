@@ -1,0 +1,43 @@
+---
+title: "bdb_analysis_V20"
+date: "2024-08-10"
+author: "Ravinder Singh"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+```
+
+# This analysis is to combine two results data sets created in 'bdb_analysis_V13' and 'bdb_analysis_V19'.
+
+```{r}
+results_first25 <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V13/results_full_1-25.csv")
+results_next10 <- read.csv("H:/ravi_dsi_summer_project/bdb_analysis_V19/results_full_26-35.csv")
+```
+
+```{r}
+results_first25$X <- NULL
+results_next10$X <- NULL
+```
+
+```{r}
+results_full <- rbind(results_first25, results_next10)
+```
+
+```{r}
+write.csv(results_full, "H:/ravi_dsi_summer_project/bdb_analysis_V20/results_full.csv")
+```
+
+```{r}
+
+```
+
+
